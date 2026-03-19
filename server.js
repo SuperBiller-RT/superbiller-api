@@ -93,7 +93,7 @@ app.post('/auth/register', async (req, res) => {
     const allowedDomains = ['@superbiller.com', '@recruitmenttraining'];
     const allowed = allowedDomains.some(d => email.endsWith(d));
     if (!allowed) {
-      return res.json({ success: false, message: 'Registration is restricted to @superbiller.com and @recruitmenttraining emails only.' });
+      return res.json({ success: false, message: 'Invalid business email.' });
     }
     // Check if email already exists
     const existing = await db.query('SELECT id FROM users WHERE email = $1', [email]);
