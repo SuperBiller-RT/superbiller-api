@@ -144,10 +144,17 @@ app.get('/auth/verify', authMiddleware, (req, res) => {
 // PROXY → N8N
 app.post('/video', authMiddleware, async (req, res) => {
   try {
+    // Domain validation
+    const email = req.user.email || '';
+    const allowedDomains = ['@superbiller.com', '@recruitmenttraining'];
+    const allowed = allowedDomains.some(d => email.endsWith(d));
+    if (!allowed) {
+      return res.status(403).json({ success: false, message: 'Access denied — unauthorized email domain.' });
+    }
     const r = await fetch(N8N_WEBHOOK, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(req.body)
+      body: JSON.stringify({ ...req.body, user_email: email, user_name: req.user.name })
     });
     const text = await r.text();
     let data; try { data = JSON.parse(text); } catch { data = { raw: text }; }
@@ -160,14 +167,15 @@ app.post('/video', authMiddleware, async (req, res) => {
 // AIRTABLE — create video
 app.post('/airtable/video', authMiddleware, async (req, res) => {
   try {
-    const { industry, search_focus, pipeline, status = 'Start' } = req.body;
+    const { industry, search_focus, pipeline, status = 'Start', user_email } = req.body;
     const data = await atFetch(`/${AIRTABLE_TABLE}`, {
       method: 'POST',
       body: JSON.stringify({ fields: {
         'Industry ( **required** )': industry,
         'search_focus ( **required** )': search_focus,
         'pipeline ( **required** )': pipeline,
-        'status ( **required** )': status
+        'status ( **required** )': status,
+        'user': user_email || req.user.email || ''
       }})
     });
     res.json({ success: true, record: data });
