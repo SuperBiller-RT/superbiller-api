@@ -1,5 +1,7 @@
 const express = require('express');
 const { Pool } = require('pg');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 
 const app = express();
 app.use(express.json());
@@ -20,18 +22,52 @@ const db = new Pool({
 });
 
 // ── CONFIG ────────────────────────────────────────────────
+const JWT_SECRET      = process.env.JWT_SECRET || 'superbiller-secret-change-me';
 const N8N_WEBHOOK     = process.env.N8N_WEBHOOK_URL;
 const AIRTABLE_BASE   = 'appwGBvGSWNq8BLfh';
-const AIRTABLE_TABLE  = 'tbliHRJwRfrQckb55';         // n8n_video
-const AIRTABLE_SCRIPT = 'tblj00M8en7pmuwOn';         // Script Refiner Agent
-const AIRTABLE_PROD   = process.env.AIRTABLE_PROD_TABLE || 'video_production';
+const AIRTABLE_TABLE  = 'tbliHRJwRfrQckb55';
+const AIRTABLE_SCRIPT = 'tblj00M8en7pmuwOn';
 const AIRTABLE_PAT    = process.env.AIRTABLE_PAT;
+
+// ── SETUP DB ──────────────────────────────────────────────
+// Creates users table if it doesn't exist
+async function setupDB() {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      name VARCHAR(100) NOT NULL,
+      email VARCHAR(200) UNIQUE NOT NULL,
+      password_hash VARCHAR(200) NOT NULL,
+      role VARCHAR(50) DEFAULT 'editor',
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+  console.log('DB ready');
+}
+setupDB().catch(console.error);
+
+// ── JWT MIDDLEWARE ────────────────────────────────────────
+function authMiddleware(req, res, next) {
+  const header = req.headers['authorization'];
+  if (!header) return res.status(401).json({ success: false, message: 'No token' });
+  const token = header.replace('Bearer ', '');
+  try {
+    req.user = jwt.verify(token, JWT_SECRET);
+    next();
+  } catch {
+    res.status(401).json({ success: false, message: 'Invalid or expired token' });
+  }
+}
 
 // ── AIRTABLE HELPER ───────────────────────────────────────
 async function atFetch(path, opts = {}) {
   const r = await fetch(`https://api.airtable.com/v0/${AIRTABLE_BASE}${path}`, {
     ...opts,
-    headers: { 'Authorization': `Bearer ${AIRTABLE_PAT}`, 'Content-Type': 'application/json', ...(opts.headers || {}) }
+    headers: {
+      'Authorization': `Bearer ${AIRTABLE_PAT}`,
+      'Content-Type': 'application/json',
+      ...(opts.headers || {})
+    }
   });
   return r.json();
 }
@@ -39,8 +75,74 @@ async function atFetch(path, opts = {}) {
 // ── HEALTH ────────────────────────────────────────────────
 app.get('/health', (req, res) => res.json({ status: 'ok', ts: new Date() }));
 
-// ── PROXY → N8N ───────────────────────────────────────────
-app.post('/video', async (req, res) => {
+// ══════════════════════════════════════════════════════════
+// AUTH ROUTES
+// ══════════════════════════════════════════════════════════
+
+// REGISTER
+app.post('/auth/register', async (req, res) => {
+  try {
+    const { name, email, password, role = 'editor' } = req.body;
+    if (!name || !email || !password) {
+      return res.json({ success: false, message: 'Name, email and password are required' });
+    }
+    if (password.length < 6) {
+      return res.json({ success: false, message: 'Password must be at least 6 characters' });
+    }
+    // Check if email already exists
+    const existing = await db.query('SELECT id FROM users WHERE email = $1', [email]);
+    if (existing.rows.length > 0) {
+      return res.json({ success: false, message: 'Email already registered' });
+    }
+    const hash = await bcrypt.hash(password, 10);
+    const result = await db.query(
+      'INSERT INTO users (name, email, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id, name, email, role',
+      [name, email, hash, role]
+    );
+    const user = result.rows[0];
+    const token = jwt.sign({ id: user.id, email: user.email, name: user.name, role: user.role }, JWT_SECRET, { expiresIn: '8h' });
+    res.json({ success: true, token, name: user.name, email: user.email, role: user.role });
+  } catch (err) {
+    console.error('Register error:', err.message);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// LOGIN
+app.post('/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.json({ success: false, message: 'Email and password are required' });
+    }
+    const result = await db.query('SELECT * FROM users WHERE email = $1 LIMIT 1', [email]);
+    if (result.rows.length === 0) {
+      return res.json({ success: false, message: 'Invalid email or password' });
+    }
+    const user = result.rows[0];
+    const match = await bcrypt.compare(password, user.password_hash);
+    if (!match) {
+      return res.json({ success: false, message: 'Invalid email or password' });
+    }
+    const token = jwt.sign({ id: user.id, email: user.email, name: user.name, role: user.role }, JWT_SECRET, { expiresIn: '8h' });
+    res.json({ success: true, token, name: user.name, email: user.email, role: user.role });
+  } catch (err) {
+    console.error('Login error:', err.message);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// VERIFY TOKEN (check if still valid)
+app.get('/auth/verify', authMiddleware, (req, res) => {
+  res.json({ success: true, user: req.user });
+});
+
+// ══════════════════════════════════════════════════════════
+// VIDEO ROUTES (protected)
+// ══════════════════════════════════════════════════════════
+
+// PROXY → N8N
+app.post('/video', authMiddleware, async (req, res) => {
   try {
     const r = await fetch(N8N_WEBHOOK, {
       method: 'POST',
@@ -55,8 +157,8 @@ app.post('/video', async (req, res) => {
   }
 });
 
-// ── AIRTABLE — create video ───────────────────────────────
-app.post('/airtable/video', async (req, res) => {
+// AIRTABLE — create video
+app.post('/airtable/video', authMiddleware, async (req, res) => {
   try {
     const { industry, search_focus, pipeline, status = 'Start' } = req.body;
     const data = await atFetch(`/${AIRTABLE_TABLE}`, {
@@ -74,8 +176,8 @@ app.post('/airtable/video', async (req, res) => {
   }
 });
 
-// ── AIRTABLE — get videos ─────────────────────────────────
-app.get('/airtable/videos', async (req, res) => {
+// AIRTABLE — get videos
+app.get('/airtable/videos', authMiddleware, async (req, res) => {
   try {
     const data = await atFetch(`/${AIRTABLE_TABLE}?maxRecords=100&sort[0][field]=created_at&sort[0][direction]=desc`);
     res.json({ success: true, records: data.records });
@@ -84,8 +186,8 @@ app.get('/airtable/videos', async (req, res) => {
   }
 });
 
-// ── AIRTABLE — update record ──────────────────────────────
-app.post('/airtable/update', async (req, res) => {
+// AIRTABLE — update record
+app.post('/airtable/update', authMiddleware, async (req, res) => {
   try {
     const { record_id, fields } = req.body;
     const data = await atFetch(`/${AIRTABLE_TABLE}/${record_id}`, {
@@ -98,77 +200,32 @@ app.post('/airtable/update', async (req, res) => {
   }
 });
 
-// ── AUTH — login via Postgres ─────────────────────────────
-app.post('/auth/login', async (req, res) => {
-  try {
-    const { email, password } = req.body;
-    const result = await db.query(
-      'SELECT id, name, email, role FROM users WHERE email = $1 AND password = $2 LIMIT 1',
-      [email, password]
-    );
-    if (result.rows.length === 0) {
-      return res.json({ success: false, message: 'Invalid credentials' });
-    }
-    const user = result.rows[0];
-    res.json({ success: true, name: user.name, email: user.email, role: user.role });
-  } catch (err) {
-    // Users table not set up yet — pass through
-    console.error('Auth error:', err.message);
-    res.json({ success: true, name: req.body.email.split('@')[0], email: req.body.email, role: 'user' });
-  }
-});
+// ══════════════════════════════════════════════════════════
+// DASHBOARD ROUTES (protected)
+// ══════════════════════════════════════════════════════════
 
-// ── POSTGRES — raw query ──────────────────────────────────
-app.post('/db/query', async (req, res) => {
-  try {
-    const { sql, params = [] } = req.body;
-    const result = await db.query(sql, params);
-    res.json({ success: true, rows: result.rows });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// ── DASHBOARD — pipeline overview ────────────────────────
-// Returns all videos grouped by stage with counts + stuck flags
-app.get('/dashboard/pipeline', async (req, res) => {
+app.get('/dashboard/pipeline', authMiddleware, async (req, res) => {
   try {
     const data = await atFetch(`/${AIRTABLE_TABLE}?maxRecords=200&sort[0][field]=created_at&sort[0][direction]=desc`);
     const records = data.records || [];
-
-    const stages = {
-      'Start': [],
-      'In Progress': [],
-      'Completed': [],
-      'Error': [],
-      'Retry': []
-    };
-
-    let pendingReview = 0, approved = 0, rejected = 0;
     const now = Date.now();
+    const stages = { 'Start': [], 'In Progress': [], 'Completed': [], 'Error': [], 'Retry': [] };
+    let pendingReview = 0, approved = 0, rejected = 0;
 
     records.forEach(r => {
       const f = r.fields;
       const status = f['status ( **required** )'] || 'Start';
       const scriptStatus = f['script_status'] || '';
-      const stage = f['stage : agent_name'] || '—';
-      const createdAt = f['created_at'] ? new Date(f['created_at']).getTime() : now;
-      const hoursOld = (now - createdAt) / 1000 / 3600;
-
+      const hoursOld = f['created_at'] ? (now - new Date(f['created_at']).getTime()) / 3600000 : 0;
       const item = {
-        id: r.id,
-        industry: f['Industry ( **required** )'] || '—',
-        title: f['title'] || null,
-        status,
-        stage,
-        script_status: scriptStatus,
-        pipeline: f['pipeline ( **required** )'] || '—',
+        id: r.id, industry: f['Industry ( **required** )'] || '—',
+        title: f['title'] || null, status, stage: f['stage : agent_name'] || '—',
+        script_status: scriptStatus, pipeline: f['pipeline ( **required** )'] || '—',
         created_at: f['created_at'] || null,
         hours_old: Math.round(hoursOld * 10) / 10,
         stuck: hoursOld > 24 && status === 'In Progress',
         delayed: hoursOld > 2 && status === 'In Progress'
       };
-
       if (stages[status]) stages[status].push(item);
       if (scriptStatus === 'Pending Review') pendingReview++;
       if (scriptStatus === 'Approved') approved++;
@@ -176,63 +233,34 @@ app.get('/dashboard/pipeline', async (req, res) => {
     });
 
     res.json({
-      success: true,
-      total: records.length,
-      counts: {
-        start: stages['Start'].length,
-        in_progress: stages['In Progress'].length,
-        completed: stages['Completed'].length,
-        error: stages['Error'].length,
-        retry: stages['Retry'].length
-      },
+      success: true, total: records.length,
+      counts: { start: stages['Start'].length, in_progress: stages['In Progress'].length, completed: stages['Completed'].length, error: stages['Error'].length, retry: stages['Retry'].length },
       script_counts: { pending_review: pendingReview, approved, rejected },
-      stuck: records.filter(r => {
-        const f = r.fields;
-        const hoursOld = f['created_at'] ? (now - new Date(f['created_at']).getTime()) / 3600000 : 0;
-        return hoursOld > 24 && f['status ( **required** )'] === 'In Progress';
-      }).map(r => ({ id: r.id, industry: r.fields['Industry ( **required** )'], hours_old: Math.round((now - new Date(r.fields['created_at']).getTime()) / 3600000) })),
-      stages,
+      stages
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// ── DASHBOARD — metrics summary ───────────────────────────
-// Key numbers the director sees at top: velocity, pass rate, etc.
-app.get('/dashboard/metrics', async (req, res) => {
+app.get('/dashboard/metrics', authMiddleware, async (req, res) => {
   try {
-    const data = await atFetch(`/${AIRTABLE_TABLE}?maxRecords=200&sort[0][field]=created_at&sort[0][direction]=desc`);
+    const data = await atFetch(`/${AIRTABLE_TABLE}?maxRecords=200`);
     const records = data.records || [];
     const now = Date.now();
-
-    // Videos completed in last 7 days
     const last7d = records.filter(r => {
-      const f = r.fields;
-      const created = f['created_at'] ? new Date(f['created_at']).getTime() : 0;
-      return (now - created) < 7 * 24 * 3600000 && f['status ( **required** )'] === 'Completed';
+      const c = r.fields['created_at'] ? new Date(r.fields['created_at']).getTime() : 0;
+      return (now - c) < 7 * 24 * 3600000 && r.fields['status ( **required** )'] === 'Completed';
     });
-
-    // Videos completed today
-    const today = records.filter(r => {
-      const f = r.fields;
-      const created = f['created_at'] ? new Date(f['created_at']).getTime() : 0;
-      return (now - created) < 24 * 3600000 && f['status ( **required** )'] === 'Completed';
-    });
-
     const completed = records.filter(r => r.fields['status ( **required** )'] === 'Completed');
     const approvedScripts = records.filter(r => r.fields['script_status'] === 'Approved');
-    const qualityPassRate = completed.length > 0 ? Math.round((approvedScripts.length / completed.length) * 100) : 0;
-    const avgPerDay = last7d.length > 0 ? Math.round((last7d.length / 7) * 10) / 10 : 0;
-
     res.json({
       success: true,
       total_videos: records.length,
       completed_total: completed.length,
       completed_last_7d: last7d.length,
-      completed_today: today.length,
-      avg_per_day: avgPerDay,
-      quality_pass_rate: qualityPassRate,
+      avg_per_day: last7d.length > 0 ? Math.round((last7d.length / 7) * 10) / 10 : 0,
+      quality_pass_rate: completed.length > 0 ? Math.round((approvedScripts.length / completed.length) * 100) : 0,
       pending_review: records.filter(r => r.fields['script_status'] === 'Pending Review').length,
       errors: records.filter(r => r.fields['status ( **required** )'] === 'Error').length,
       in_progress: records.filter(r => r.fields['status ( **required** )'] === 'In Progress').length
@@ -242,43 +270,29 @@ app.get('/dashboard/metrics', async (req, res) => {
   }
 });
 
-// ── DASHBOARD — scripts (Script Refiner table) ────────────
-// All scripts with professional/casual EN/TH + approval status
-app.get('/dashboard/scripts', async (req, res) => {
+app.get('/dashboard/scripts', authMiddleware, async (req, res) => {
   try {
-    const data = await atFetch(`/${AIRTABLE_SCRIPT}?maxRecords=100&sort[0][field]=id&sort[0][direction]=desc`);
+    const data = await atFetch(`/${AIRTABLE_SCRIPT}?maxRecords=100`);
     res.json({ success: true, records: data.records || [] });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// ── DASHBOARD — approve / reject script ──────────────────
-app.post('/dashboard/script/approve', async (req, res) => {
+app.post('/dashboard/script/approve', authMiddleware, async (req, res) => {
   try {
-    const { record_id, action } = req.body; // action: 'Approved' | 'Rejected'
-    // Update Script Refiner table
-    const scriptUpdate = await atFetch(`/${AIRTABLE_SCRIPT}/${record_id}`, {
+    const { record_id, action } = req.body;
+    const data = await atFetch(`/${AIRTABLE_SCRIPT}/${record_id}`, {
       method: 'PATCH',
       body: JSON.stringify({ fields: { status: action } })
     });
-    // Also update n8n_video table if linked
-    const scriptRecord = scriptUpdate;
-    const n8nVideoId = scriptRecord.fields?.n8n_video?.[0];
-    if (n8nVideoId) {
-      await atFetch(`/${AIRTABLE_TABLE}/${n8nVideoId}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ fields: { 'script_status': action } })
-      });
-    }
-    res.json({ success: true, record: scriptUpdate });
+    res.json({ success: true, record: data });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// ── DASHBOARD — retry errored videos ─────────────────────
-app.post('/dashboard/retry', async (req, res) => {
+app.post('/dashboard/retry', authMiddleware, async (req, res) => {
   try {
     const { record_id } = req.body;
     const data = await atFetch(`/${AIRTABLE_TABLE}/${record_id}`, {
@@ -291,25 +305,33 @@ app.post('/dashboard/retry', async (req, res) => {
   }
 });
 
-// ── DASHBOARD — weekly output chart data ─────────────────
-app.get('/dashboard/weekly', async (req, res) => {
+app.get('/dashboard/weekly', authMiddleware, async (req, res) => {
   try {
-    const data = await atFetch(`/${AIRTABLE_TABLE}?maxRecords=500&sort[0][field]=created_at&sort[0][direction]=desc`);
+    const data = await atFetch(`/${AIRTABLE_TABLE}?maxRecords=500`);
     const records = data.records || [];
     const now = Date.now();
     const weeks = [];
-
     for (let i = 7; i >= 0; i--) {
-      const weekStart = now - (i + 1) * 7 * 24 * 3600000;
-      const weekEnd   = now - i * 7 * 24 * 3600000;
+      const s = now - (i + 1) * 7 * 24 * 3600000;
+      const e = now - i * 7 * 24 * 3600000;
       const count = records.filter(r => {
-        const created = r.fields['created_at'] ? new Date(r.fields['created_at']).getTime() : 0;
-        return created >= weekStart && created < weekEnd && r.fields['status ( **required** )'] === 'Completed';
+        const c = r.fields['created_at'] ? new Date(r.fields['created_at']).getTime() : 0;
+        return c >= s && c < e && r.fields['status ( **required** )'] === 'Completed';
       }).length;
       weeks.push({ week: `W${8 - i}`, count });
     }
-
     res.json({ success: true, weeks });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── POSTGRES — raw query ──────────────────────────────────
+app.post('/db/query', authMiddleware, async (req, res) => {
+  try {
+    const { sql, params = [] } = req.body;
+    const result = await db.query(sql, params);
+    res.json({ success: true, rows: result.rows });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
