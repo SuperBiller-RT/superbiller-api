@@ -89,6 +89,12 @@ app.post('/auth/register', async (req, res) => {
     if (password.length < 6) {
       return res.json({ success: false, message: 'Password must be at least 6 characters' });
     }
+    // Domain validation
+    const allowedDomains = ['@superbiller.com', '@recruitmenttraining'];
+    const allowed = allowedDomains.some(d => email.endsWith(d));
+    if (!allowed) {
+      return res.json({ success: false, message: 'Registration is restricted to @superbiller.com and @recruitmenttraining emails only.' });
+    }
     // Check if email already exists
     const existing = await db.query('SELECT id FROM users WHERE email = $1', [email]);
     if (existing.rows.length > 0) {
