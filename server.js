@@ -22,15 +22,15 @@ const db = new Pool({
 });
 
 // ── CONFIG ────────────────────────────────────────────────
-const JWT_SECRET      = process.env.JWT_SECRET || 'superbiller-secret-change-me';
-const N8N_WEBHOOK     = process.env.N8N_WEBHOOK_URL;
-const AIRTABLE_BASE   = 'appwGBvGSWNq8BLfh';
-const AIRTABLE_TABLE  = 'tbliHRJwRfrQckb55';
-const AIRTABLE_SCRIPT = 'tblj00M8en7pmuwOn';
-const AIRTABLE_PAT    = process.env.AIRTABLE_PAT;
+const JWT_SECRET        = process.env.JWT_SECRET || 'superbiller-secret-change-me';
+const N8N_WEBHOOK       = process.env.N8N_WEBHOOK_URL;
+const AIRTABLE_BASE     = 'appwGBvGSWNq8BLfh';
+const AIRTABLE_TABLE    = 'tbliHRJwRfrQckb55';  // n8n_video
+const AIRTABLE_SCENES   = 'tblbtxQHxqIlsMrSd';  // video_production (scenes)
+const AIRTABLE_SCRIPT   = 'tblj00M8en7pmuwOn';
+const AIRTABLE_PAT      = process.env.AIRTABLE_PAT;
 
 // ── SETUP DB ──────────────────────────────────────────────
-// Creates users table if it doesn't exist
 async function setupDB() {
   await db.query(`
     CREATE TABLE IF NOT EXISTS users (
@@ -79,27 +79,19 @@ app.get('/health', (req, res) => res.json({ status: 'ok', ts: new Date() }));
 // AUTH ROUTES
 // ══════════════════════════════════════════════════════════
 
-// REGISTER
 app.post('/auth/register', async (req, res) => {
   try {
     const { name, email, password, role = 'editor' } = req.body;
-    if (!name || !email || !password) {
+    if (!name || !email || !password)
       return res.json({ success: false, message: 'Name, email and password are required' });
-    }
-    if (password.length < 6) {
+    if (password.length < 6)
       return res.json({ success: false, message: 'Password must be at least 6 characters' });
-    }
-    // Domain validation
     const allowedDomains = ['@superbiller.com', '@recruitmenttraining'];
-    const allowed = allowedDomains.some(d => email.endsWith(d));
-    if (!allowed) {
+    if (!allowedDomains.some(d => email.endsWith(d)))
       return res.json({ success: false, message: 'Invalid business email.' });
-    }
-    // Check if email already exists
     const existing = await db.query('SELECT id FROM users WHERE email = $1', [email]);
-    if (existing.rows.length > 0) {
+    if (existing.rows.length > 0)
       return res.json({ success: false, message: 'Email already registered' });
-    }
     const hash = await bcrypt.hash(password, 10);
     const result = await db.query(
       'INSERT INTO users (name, email, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id, name, email, role',
@@ -114,22 +106,18 @@ app.post('/auth/register', async (req, res) => {
   }
 });
 
-// LOGIN
 app.post('/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
-    if (!email || !password) {
+    if (!email || !password)
       return res.json({ success: false, message: 'Email and password are required' });
-    }
     const result = await db.query('SELECT * FROM users WHERE email = $1 LIMIT 1', [email]);
-    if (result.rows.length === 0) {
+    if (result.rows.length === 0)
       return res.json({ success: false, message: 'Invalid email or password' });
-    }
     const user = result.rows[0];
     const match = await bcrypt.compare(password, user.password_hash);
-    if (!match) {
+    if (!match)
       return res.json({ success: false, message: 'Invalid email or password' });
-    }
     const token = jwt.sign({ id: user.id, email: user.email, name: user.name, role: user.role }, JWT_SECRET, { expiresIn: '8h' });
     res.json({ success: true, token, name: user.name, email: user.email, role: user.role });
   } catch (err) {
@@ -138,7 +126,6 @@ app.post('/auth/login', async (req, res) => {
   }
 });
 
-// VERIFY TOKEN (check if still valid)
 app.get('/auth/verify', authMiddleware, (req, res) => {
   res.json({ success: true, user: req.user });
 });
@@ -147,16 +134,12 @@ app.get('/auth/verify', authMiddleware, (req, res) => {
 // VIDEO ROUTES (protected)
 // ══════════════════════════════════════════════════════════
 
-// PROXY → N8N
 app.post('/video', authMiddleware, async (req, res) => {
   try {
-    // Domain validation
     const email = req.user.email || '';
     const allowedDomains = ['@superbiller.com', '@recruitmenttraining'];
-    const allowed = allowedDomains.some(d => email.endsWith(d));
-    if (!allowed) {
+    if (!allowedDomains.some(d => email.endsWith(d)))
       return res.status(403).json({ success: false, message: 'Access denied — unauthorized email domain.' });
-    }
     const r = await fetch(N8N_WEBHOOK, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -170,7 +153,6 @@ app.post('/video', authMiddleware, async (req, res) => {
   }
 });
 
-// AIRTABLE — create video
 app.post('/airtable/video', authMiddleware, async (req, res) => {
   try {
     const { industry, search_focus, pipeline, status = 'Start', user_email } = req.body;
@@ -190,7 +172,6 @@ app.post('/airtable/video', authMiddleware, async (req, res) => {
   }
 });
 
-// AIRTABLE — get videos
 app.get('/airtable/videos', authMiddleware, async (req, res) => {
   try {
     const data = await atFetch(`/${AIRTABLE_TABLE}?maxRecords=100&sort[0][field]=created_at&sort[0][direction]=desc`);
@@ -200,7 +181,20 @@ app.get('/airtable/videos', authMiddleware, async (req, res) => {
   }
 });
 
-// AIRTABLE — update record
+// ── AIRTABLE — get scenes by execution_id ─────────────────
+app.get('/airtable/scenes', authMiddleware, async (req, res) => {
+  try {
+    const execId = req.query.execution_id;
+    if (!execId)
+      return res.status(400).json({ success: false, error: 'execution_id query param required' });
+    const filter = encodeURIComponent(`{execution_id}="${execId}"`);
+    const data = await atFetch(`/${AIRTABLE_SCENES}?maxRecords=200&filterByFormula=${filter}&sort[0][field]=no&sort[0][direction]=asc`);
+    res.json({ success: true, records: data.records || [] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.post('/airtable/update', authMiddleware, async (req, res) => {
   try {
     const { record_id, fields } = req.body;
@@ -225,7 +219,6 @@ app.get('/dashboard/pipeline', authMiddleware, async (req, res) => {
     const now = Date.now();
     const stages = { 'Start': [], 'In Progress': [], 'Completed': [], 'Error': [], 'Retry': [] };
     let pendingReview = 0, approved = 0, rejected = 0;
-
     records.forEach(r => {
       const f = r.fields;
       const status = f['status ( **required** )'] || 'Start';
@@ -245,7 +238,6 @@ app.get('/dashboard/pipeline', authMiddleware, async (req, res) => {
       if (scriptStatus === 'Approved') approved++;
       if (scriptStatus === 'Rejected') rejected++;
     });
-
     res.json({
       success: true, total: records.length,
       counts: { start: stages['Start'].length, in_progress: stages['In Progress'].length, completed: stages['Completed'].length, error: stages['Error'].length, retry: stages['Retry'].length },
