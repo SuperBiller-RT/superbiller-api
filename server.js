@@ -213,9 +213,9 @@ app.get('/airtable/scenes/debug', authMiddleware, async (req, res) => {
 // GET scenes
 app.get('/airtable/scenes', authMiddleware, async (req, res) => {
   try {
-    const jobNo = req.query.job_no;
-    if (!jobNo)
-      return res.status(400).json({ success: false, error: 'job_no query param required' });
+    const jobRecordId = req.query.job_record_id;
+    if (!jobRecordId)
+      return res.status(400).json({ success: false, error: 'job_record_id query param required' });
 
     const fields = [
       'no', 'scene_number', 'scene_type', 'pacing',
@@ -224,20 +224,17 @@ app.get('/airtable/scenes', authMiddleware, async (req, res) => {
       'image_prompt', 'negative_prompt', 'Approval', 'image', 'status'
     ];
     const fieldParams = fields.map(f => `fields[]=${encodeURIComponent(f)}`).join('&');
-    const filter = encodeURIComponent(`{n8n_video_row}=${jobNo}`);
+    const filter = encodeURIComponent(`{n8n_video}="${jobRecordId}"`);
 
     const data = await atFetch(
       `/${AIRTABLE_SCENES}?maxRecords=200&filterByFormula=${filter}&sort[0][field]=no&sort[0][direction]=asc&${fieldParams}`
     );
 
-    // Deduplicate by scene_number — keep only the record with the highest `no` value
     const sceneMap = new Map();
     (data.records || []).forEach(r => {
       const sn = r.fields.scene_number;
       const existing = sceneMap.get(sn);
-      if (!existing || r.fields.no > existing.fields.no) {
-        sceneMap.set(sn, r);
-      }
+      if (!existing || r.fields.no > existing.fields.no) sceneMap.set(sn, r);
     });
     const unique = Array.from(sceneMap.values())
       .sort((a, b) => a.fields.scene_number - b.fields.scene_number);
