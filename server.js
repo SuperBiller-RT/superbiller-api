@@ -181,12 +181,12 @@ app.get('/airtable/videos', authMiddleware, async (req, res) => {
   }
 });
 
-// ── AIRTABLE — get scenes by execution_id ─────────────────
+// ── AIRTABLE — get scenes by n8n_video_row (job no) ───────
 app.get('/airtable/scenes', authMiddleware, async (req, res) => {
   try {
-    const execId = req.query.execution_id;
-    if (!execId)
-      return res.status(400).json({ success: false, error: 'execution_id query param required' });
+    const jobNo = req.query.job_no;
+    if (!jobNo)
+      return res.status(400).json({ success: false, error: 'job_no query param required' });
 
     const fields = [
       'scene_number', 'scene_type', 'pacing',
@@ -195,8 +195,7 @@ app.get('/airtable/scenes', authMiddleware, async (req, res) => {
       'image_prompt', 'negative_prompt', 'Approval'
     ];
     const fieldParams = fields.map(f => `fields[]=${encodeURIComponent(f)}`).join('&');
-    // execution_id is a linked record (array) — use FIND to match
-    const filter = encodeURIComponent(`FIND("${execId}",ARRAYJOIN({execution_id},","))`);
+    const filter = encodeURIComponent(`{n8n_video_row}=${jobNo}`);
 
     const data = await atFetch(
       `/${AIRTABLE_SCENES}?maxRecords=200&filterByFormula=${filter}&sort[0][field]=scene_number&sort[0][direction]=asc&${fieldParams}`
