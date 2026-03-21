@@ -192,15 +192,39 @@ app.get('/airtable/scenes', authMiddleware, async (req, res) => {
       'scene_number', 'scene_type', 'pacing',
       'estimated_duration_secs', 'scene_purpose',
       'voiceover_sync_EN', 'voiceover_sync_TH',
-      'image_prompt', 'negative_prompt'
+      'image_prompt', 'negative_prompt', 'Approval'
     ];
     const fieldParams = fields.map(f => `fields[]=${encodeURIComponent(f)}`).join('&');
-    const filter = encodeURIComponent(`{execution_id}="${execId}"`);
+    // execution_id is a linked record (array) — use FIND to match
+    const filter = encodeURIComponent(`FIND("${execId}",ARRAYJOIN({execution_id},","))`);
 
     const data = await atFetch(
       `/${AIRTABLE_SCENES}?maxRecords=200&filterByFormula=${filter}&sort[0][field]=scene_number&sort[0][direction]=asc&${fieldParams}`
     );
     res.json({ success: true, records: data.records || [] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── AIRTABLE — update scene record ────────────────────────
+app.post('/airtable/scene/update', authMiddleware, async (req, res) => {
+  try {
+    const { record_id, fields } = req.body;
+    if (!record_id || !fields)
+      return res.status(400).json({ success: false, error: 'record_id and fields required' });
+    const allowed = ['image_prompt', 'negative_prompt', 'Approval'];
+    const filtered = Object.keys(fields).reduce((acc, k) => {
+      if (allowed.includes(k)) acc[k] = fields[k];
+      return acc;
+    }, {});
+    if (Object.keys(filtered).length === 0)
+      return res.status(400).json({ success: false, error: 'No valid fields to update' });
+    const data = await atFetch(`/${AIRTABLE_SCENES}/${record_id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ fields: filtered })
+    });
+    res.json({ success: true, record: data });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
