@@ -251,7 +251,7 @@ app.post('/airtable/scene/update', authMiddleware, async (req, res) => {
     const { record_id, fields } = req.body;
     if (!record_id || !fields)
       return res.status(400).json({ success: false, error: 'record_id and fields required' });
-    const allowed = ['image_prompt', 'negative_prompt', 'Generate', 'status'];
+    const allowed = ['image_prompt', 'negative_prompt', 'voiceover_sync_EN', 'voiceover_sync_TH', 'Generate', 'status'];
     const filtered = Object.keys(fields).reduce((acc, k) => {
       if (allowed.includes(k)) acc[k] = fields[k];
       return acc;
