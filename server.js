@@ -200,17 +200,16 @@ app.post('/airtable/video/update', authMiddleware, async (req, res) => {
 // SCENE ROUTES
 // ══════════════════════════════════════════════════════════
 
-// DEBUG — see raw Airtable response (remove after debugging)
+// DEBUG
 app.get('/airtable/scenes/debug', authMiddleware, async (req, res) => {
   try {
     const data = await atFetch(`/${AIRTABLE_SCENES}?maxRecords=3`);
-    res.json({ success: true, raw: data }); // return everything raw
+    res.json({ success: true, raw: data });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// GET scenes
 // GET scenes
 app.get('/airtable/scenes', authMiddleware, async (req, res) => {
   try {
@@ -252,7 +251,7 @@ app.post('/airtable/scene/update', authMiddleware, async (req, res) => {
     const { record_id, fields } = req.body;
     if (!record_id || !fields)
       return res.status(400).json({ success: false, error: 'record_id and fields required' });
-    const allowed = ['image_prompt', 'negative_prompt', 'Approval', 'status'];
+    const allowed = ['image_prompt', 'negative_prompt', 'Generate', 'status'];
     const filtered = Object.keys(fields).reduce((acc, k) => {
       if (allowed.includes(k)) acc[k] = fields[k];
       return acc;
