@@ -351,12 +351,14 @@ app.post('/airtable/scene/update', authMiddleware, async (req, res) => {
     ];
 
     const filtered = Object.keys(fields).reduce((acc, k) => {
+      // Allow all values including empty string and empty array (used to clear fields)
       if (allowed.includes(k)) acc[k] = fields[k];
       return acc;
     }, {});
 
     if (Object.keys(filtered).length === 0)
       return res.status(400).json({ success: false, error: 'No valid fields to update' });
+    // Note: null and [] are valid values (used to clear fields)
 
     const data = await atFetch(`/${AIRTABLE_SCENES}/${record_id}`, {
       method: 'PATCH',
