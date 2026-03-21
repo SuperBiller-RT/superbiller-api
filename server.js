@@ -219,7 +219,7 @@ app.get('/airtable/scenes', authMiddleware, async (req, res) => {
 
     const fields = [
       'no', 'scene_number', 'scene_type', 'pacing',
-      'estimated_duration_secs', 'total_scenes',
+      'estimated_duration_secs', 'total_scenes', 'total_duration',
       'voiceover_sync_EN', 'voiceover_sync_TH',
       'image_prompt', 'negative_prompt',
       'Generate', 'image', 'status', 'task',
