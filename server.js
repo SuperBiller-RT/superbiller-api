@@ -230,6 +230,7 @@ app.get('/airtable/scenes', authMiddleware, async (req, res) => {
       `/${AIRTABLE_SCENES}?maxRecords=200&filterByFormula=${filter}&sort[0][field]=no&sort[0][direction]=asc&${fieldParams}`
     );
 
+    // Deduplicate by scene_number — keep record with highest no
     const sceneMap = new Map();
     (data.records || []).forEach(r => {
       const sn = r.fields.scene_number;
@@ -251,7 +252,7 @@ app.post('/airtable/scene/update', authMiddleware, async (req, res) => {
     const { record_id, fields } = req.body;
     if (!record_id || !fields)
       return res.status(400).json({ success: false, error: 'record_id and fields required' });
-    const allowed = ['image_prompt', 'negative_prompt', 'Approval'];
+    const allowed = ['image_prompt', 'negative_prompt', 'Approval', 'status'];
     const filtered = Object.keys(fields).reduce((acc, k) => {
       if (allowed.includes(k)) acc[k] = fields[k];
       return acc;
