@@ -221,17 +221,30 @@ app.get('/airtable/scenes', authMiddleware, async (req, res) => {
       'no', 'scene_number', 'scene_type', 'pacing',
       'estimated_duration_secs', 'total_scenes',
       'voiceover_sync_EN', 'voiceover_sync_TH',
-      'image_prompt', 'negative_prompt', 'Generate', 'image', 'status'
+      'image_prompt', 'negative_prompt', 'Generate', 'image', 'status',
+      'n8n_video'
     ];
     const fieldParams = fields.map(f => `fields[]=${encodeURIComponent(f)}`).join('&');
-    const filter = encodeURIComponent(`FIND("${jobRecordId}",ARRAYJOIN({n8n_video},","))`);
 
-    const data = await atFetch(
-      `/${AIRTABLE_SCENES}?maxRecords=200&filterByFormula=${filter}&sort[0][field]=no&sort[0][direction]=asc&${fieldParams}`
-    );
+    // Fetch all records — filter in Node since n8n_video is a linked record field
+    let allRecords = [];
+    let offset = null;
+    do {
+      const url = `/${AIRTABLE_SCENES}?maxRecords=200&sort[0][field]=no&sort[0][direction]=asc&${fieldParams}` + (offset ? `&offset=${offset}` : '');
+      const data = await atFetch(url);
+      allRecords = allRecords.concat(data.records || []);
+      offset = data.offset || null;
+    } while (offset);
 
+    // Filter by job record ID
+    const filtered = allRecords.filter(r => {
+      const nv = r.fields['n8n_video'];
+      return Array.isArray(nv) && nv.includes(jobRecordId);
+    });
+
+    // Deduplicate by scene_number — keep highest no
     const sceneMap = new Map();
-    (data.records || []).forEach(r => {
+    filtered.forEach(r => {
       const sn = r.fields.scene_number;
       const existing = sceneMap.get(sn);
       if (!existing || r.fields.no > existing.fields.no) sceneMap.set(sn, r);
