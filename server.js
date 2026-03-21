@@ -273,9 +273,28 @@ app.get('/airtable/scenes/single', authMiddleware, async (req, res) => {
     const recordId = req.query.record_id;
     if (!recordId)
       return res.status(400).json({ success: false, error: 'record_id required' });
-    const data = await atFetch(`/${AIRTABLE_SCENES}/${recordId}?fields[]=status&fields[]=image&fields[]=audio_EN&fields[]=audio_TH&fields[]=video`);
-    res.json({ success: true, fields: data.fields || {} });
+    // Use raw fetch without Content-Type header (GET request)
+    const r = await fetch(`https://api.airtable.com/v0/${AIRTABLE_BASE}/${AIRTABLE_SCENES}/${recordId}`, {
+      headers: { 'Authorization': `Bearer ${AIRTABLE_PAT}` }
+    });
+    const data = await r.json();
+    if (data.error) {
+      console.error('Airtable single record error:', data);
+      return res.status(500).json({ success: false, error: data.error });
+    }
+    const f = data.fields || {};
+    res.json({
+      success: true,
+      fields: {
+        status: f.status || null,
+        image: f.image || null,
+        audio_EN: f.audio_EN || null,
+        audio_TH: f.audio_TH || null,
+        video: f.video || null
+      }
+    });
   } catch (err) {
+    console.error('scenes/single error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
