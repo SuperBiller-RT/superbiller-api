@@ -210,7 +210,46 @@ app.get('/airtable/scenes/debug', authMiddleware, async (req, res) => {
   }
 });
 
-// GET single scene record by record_id
+// ── SSE — connected clients ───────────────────────────────
+const clients = new Map(); // token → res
+
+app.get('/events', authMiddleware, (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const userId = req.user.id;
+  clients.set(userId, res);
+
+  // Keep alive ping every 30s
+  const ping = setInterval(() => res.write(':\n\n'), 30000);
+
+  req.on('close', () => {
+    clearInterval(ping);
+    clients.delete(userId);
+  });
+});
+
+// ── NOTIFY — called by N8N when scene status changes ─────
+app.post('/notify/scene', async (req, res) => {
+  try {
+    const { record_id, status, task } = req.body;
+    if (!record_id || !status)
+      return res.status(400).json({ success: false, error: 'record_id and status required' });
+
+    const payload = JSON.stringify({ record_id, status, task: task || '' });
+
+    // Broadcast to all connected clients
+    clients.forEach((clientRes) => {
+      clientRes.write(`data: ${payload}\n\n`);
+    });
+
+    res.json({ success: true, notified: clients.size });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 app.get('/airtable/scenes/single', authMiddleware, async (req, res) => {
   try {
     const recordId = req.query.record_id;
