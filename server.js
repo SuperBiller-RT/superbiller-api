@@ -221,7 +221,9 @@ app.get('/airtable/scenes', authMiddleware, async (req, res) => {
       'no', 'scene_number', 'scene_type', 'pacing',
       'estimated_duration_secs', 'total_scenes',
       'voiceover_sync_EN', 'voiceover_sync_TH',
-      'image_prompt', 'negative_prompt', 'Generate', 'image', 'status'
+      'image_prompt', 'negative_prompt',
+      'Generate', 'image', 'status', 'task',
+      'audio_EN', 'audio_TH', 'video'
     ];
     const fieldParams = fields.map(f => `fields[]=${encodeURIComponent(f)}`).join('&');
     const filter = encodeURIComponent(`{job_id}="${jobRecordId}"`);
@@ -251,7 +253,7 @@ app.post('/airtable/scene/update', authMiddleware, async (req, res) => {
     const { record_id, fields } = req.body;
     if (!record_id || !fields)
       return res.status(400).json({ success: false, error: 'record_id and fields required' });
-    const allowed = ['image_prompt', 'negative_prompt', 'voiceover_sync_EN', 'voiceover_sync_TH', 'Generate', 'status'];
+    const allowed = ['image_prompt', 'negative_prompt', 'voiceover_sync_EN', 'voiceover_sync_TH', 'Generate', 'status', 'task'];
     const filtered = Object.keys(fields).reduce((acc, k) => {
       if (allowed.includes(k)) acc[k] = fields[k];
       return acc;
