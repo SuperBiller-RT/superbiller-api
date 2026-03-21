@@ -224,7 +224,7 @@ app.get('/airtable/scenes', authMiddleware, async (req, res) => {
       'image_prompt', 'negative_prompt', 'Generate', 'image', 'status'
     ];
     const fieldParams = fields.map(f => `fields[]=${encodeURIComponent(f)}`).join('&');
-    const filter = encodeURIComponent(`{n8n_video}="${jobRecordId}"`);
+    const filter = encodeURIComponent(`FIND("${jobRecordId}",ARRAYJOIN({n8n_video},","))`);
 
     const data = await atFetch(
       `/${AIRTABLE_SCENES}?maxRecords=200&filterByFormula=${filter}&sort[0][field]=no&sort[0][direction]=asc&${fieldParams}`
