@@ -210,7 +210,18 @@ app.get('/airtable/scenes/debug', authMiddleware, async (req, res) => {
   }
 });
 
-// GET scenes
+// GET single scene record by record_id
+app.get('/airtable/scenes/single', authMiddleware, async (req, res) => {
+  try {
+    const recordId = req.query.record_id;
+    if (!recordId)
+      return res.status(400).json({ success: false, error: 'record_id required' });
+    const data = await atFetch(`/${AIRTABLE_SCENES}/${recordId}?fields[]=status&fields[]=image&fields[]=audio_EN&fields[]=audio_TH&fields[]=video`);
+    res.json({ success: true, fields: data.fields || {} });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 app.get('/airtable/scenes', authMiddleware, async (req, res) => {
   try {
     const jobRecordId = req.query.job_record_id;
