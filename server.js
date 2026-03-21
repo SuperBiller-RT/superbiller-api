@@ -213,18 +213,22 @@ app.get('/airtable/scenes/debug', authMiddleware, async (req, res) => {
 // ── SSE — connected clients ───────────────────────────────
 const clients = new Map(); // token → res
 
-app.get('/events', authMiddleware, (req, res) => {
+app.get('/events', (req, res) => {
+  // Auth via query param since EventSource doesn't support headers
+  const token = req.query.token;
+  if (!token) return res.status(401).end();
+  let user;
+  try { user = jwt.verify(token, JWT_SECRET); } catch { return res.status(401).end(); }
+
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
-  const userId = req.user.id;
+  const userId = user.id;
   clients.set(userId, res);
 
-  // Keep alive ping every 30s
   const ping = setInterval(() => res.write(':\n\n'), 30000);
-
   req.on('close', () => {
     clearInterval(ping);
     clients.delete(userId);
