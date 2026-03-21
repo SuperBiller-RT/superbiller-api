@@ -211,6 +211,7 @@ app.get('/airtable/scenes/debug', authMiddleware, async (req, res) => {
 });
 
 // GET scenes
+// GET scenes
 app.get('/airtable/scenes', authMiddleware, async (req, res) => {
   try {
     const jobRecordId = req.query.job_record_id;
@@ -220,8 +221,8 @@ app.get('/airtable/scenes', authMiddleware, async (req, res) => {
     const fields = [
       'no', 'scene_number', 'scene_type', 'pacing',
       'estimated_duration_secs', 'total_scenes',
-      'scene_purpose', 'voiceover_sync_EN', 'voiceover_sync_TH',
-      'image_prompt', 'negative_prompt', 'Approval', 'image', 'status'
+      'voiceover_sync_EN', 'voiceover_sync_TH',
+      'image_prompt', 'negative_prompt', 'Generate', 'image', 'status'
     ];
     const fieldParams = fields.map(f => `fields[]=${encodeURIComponent(f)}`).join('&');
     const filter = encodeURIComponent(`{n8n_video}="${jobRecordId}"`);
@@ -230,7 +231,6 @@ app.get('/airtable/scenes', authMiddleware, async (req, res) => {
       `/${AIRTABLE_SCENES}?maxRecords=200&filterByFormula=${filter}&sort[0][field]=no&sort[0][direction]=asc&${fieldParams}`
     );
 
-    // Deduplicate by scene_number — keep record with highest no
     const sceneMap = new Map();
     (data.records || []).forEach(r => {
       const sn = r.fields.scene_number;
