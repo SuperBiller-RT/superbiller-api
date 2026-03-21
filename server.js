@@ -26,7 +26,7 @@ const JWT_SECRET      = process.env.JWT_SECRET || 'superbiller-secret-change-me'
 const N8N_WEBHOOK     = process.env.N8N_WEBHOOK_URL;
 const AIRTABLE_BASE   = 'appwGBvGSWNq8BLfh';
 const AIRTABLE_TABLE  = 'tbliHRJwRfrQckb55';  // n8n_video
-const AIRTABLE_SCENES = 'tblbtxQHxqIlsMrSd';  // video_production
+const AIRTABLE_SCENES = 'tblbtxQHxqllsMrSd';  // video_production
 const AIRTABLE_SCRIPT = 'tblj00M8en7pmuwOn';
 const AIRTABLE_PAT    = process.env.AIRTABLE_PAT;
 
