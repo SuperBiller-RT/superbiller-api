@@ -4,7 +4,6 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
 const app = express();
-app.use(express.json());
 
 // ── CORS ──────────────────────────────────────────────────
 app.use(function(req, res, next) {
@@ -14,6 +13,22 @@ app.use(function(req, res, next) {
   if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
 });
+
+// ── RAW BODY for multipart uploads (must come before express.json) ──
+app.use((req, res, next) => {
+  if (req.headers['content-type'] && req.headers['content-type'].includes('multipart/form-data')) {
+    const chunks = [];
+    req.on('data', chunk => chunks.push(chunk));
+    req.on('end', () => {
+      req.rawBody = Buffer.concat(chunks);
+      next();
+    });
+  } else {
+    next();
+  }
+});
+
+app.use(express.json());
 
 // ── POSTGRES ──────────────────────────────────────────────
 const db = new Pool({
@@ -211,10 +226,9 @@ app.get('/airtable/scenes/debug', authMiddleware, async (req, res) => {
 });
 
 // ── SSE — connected clients ───────────────────────────────
-const clients = new Map(); // token → res
+const clients = new Map();
 
 app.get('/events', (req, res) => {
-  // Auth via query param since EventSource doesn't support headers
   const token = req.query.token;
   if (!token) return res.status(401).end();
   let user;
@@ -244,7 +258,6 @@ app.post('/notify/scene', async (req, res) => {
 
     const payload = JSON.stringify({ record_id, status, task: task || '' });
 
-    // Broadcast to all connected clients
     clients.forEach((clientRes) => {
       clientRes.write(`data: ${payload}\n\n`);
     });
@@ -254,6 +267,7 @@ app.post('/notify/scene', async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
 app.get('/airtable/scenes/single', authMiddleware, async (req, res) => {
   try {
     const recordId = req.query.record_id;
@@ -265,6 +279,7 @@ app.get('/airtable/scenes/single', authMiddleware, async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
 app.get('/airtable/scenes', authMiddleware, async (req, res) => {
   try {
     const jobRecordId = req.query.job_record_id;
@@ -301,25 +316,106 @@ app.get('/airtable/scenes', authMiddleware, async (req, res) => {
   }
 });
 
-// UPDATE scene
+// ── UPDATE scene fields ───────────────────────────────────
 app.post('/airtable/scene/update', authMiddleware, async (req, res) => {
   try {
     const { record_id, fields } = req.body;
     if (!record_id || !fields)
       return res.status(400).json({ success: false, error: 'record_id and fields required' });
-    const allowed = ['image_prompt', 'negative_prompt', 'voiceover_sync_EN', 'voiceover_sync_TH', 'Generate', 'status', 'task'];
+
+    const allowed = [
+      'image_prompt', 'negative_prompt',
+      'voiceover_sync_EN', 'voiceover_sync_TH',
+      'Generate', 'status', 'task',
+      // media clear (pass [] to remove attachment)
+      'image', 'audio_EN', 'audio_TH', 'video'
+    ];
+
     const filtered = Object.keys(fields).reduce((acc, k) => {
       if (allowed.includes(k)) acc[k] = fields[k];
       return acc;
     }, {});
+
     if (Object.keys(filtered).length === 0)
       return res.status(400).json({ success: false, error: 'No valid fields to update' });
+
     const data = await atFetch(`/${AIRTABLE_SCENES}/${record_id}`, {
       method: 'PATCH',
       body: JSON.stringify({ fields: filtered })
     });
     res.json({ success: true, record: data });
   } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── UPLOAD MEDIA (image / audio / video) to Airtable ─────
+app.post('/airtable/scene/upload', authMiddleware, async (req, res) => {
+  try {
+    const body = req.rawBody;
+    if (!body) return res.status(400).json({ success: false, error: 'No body received' });
+
+    const contentType = req.headers['content-type'] || '';
+    const boundaryMatch = contentType.match(/boundary=(.+)$/);
+    if (!boundaryMatch) return res.status(400).json({ success: false, error: 'No boundary in content-type' });
+    const boundary = boundaryMatch[1].trim();
+
+    const parts = body.toString('binary').split('--' + boundary);
+    let fileBuffer = null, fileName = 'upload', mimeType = 'application/octet-stream';
+    let recordId = null, field = null;
+
+    for (const part of parts) {
+      if (!part.includes('Content-Disposition')) continue;
+      const nameMatch = part.match(/name="([^"]+)"/);
+      const filenameMatch = part.match(/filename="([^"]+)"/);
+      const ctMatch = part.match(/Content-Type: ([^\r\n]+)/);
+      const name = nameMatch ? nameMatch[1] : '';
+      const headerEnd = part.indexOf('\r\n\r\n');
+      if (headerEnd === -1) continue;
+      const value = part.slice(headerEnd + 4, part.lastIndexOf('\r\n'));
+
+      if (name === 'record_id') { recordId = value.trim(); }
+      else if (name === 'field') { field = value.trim(); }
+      else if (filenameMatch) {
+        fileName = filenameMatch[1];
+        mimeType = ctMatch ? ctMatch[1].trim() : 'application/octet-stream';
+        fileBuffer = Buffer.from(value, 'binary');
+      }
+    }
+
+    if (!recordId || !field || !fileBuffer)
+      return res.status(400).json({ success: false, error: 'Missing record_id, field, or file' });
+
+    const allowedFields = ['image', 'audio_EN', 'audio_TH', 'video'];
+    if (!allowedFields.includes(field))
+      return res.status(400).json({ success: false, error: 'Field not allowed: ' + field });
+
+    // Use Airtable's upload attachment endpoint (base64)
+    const uploadRes = await fetch(
+      `https://content.airtable.com/v0/${AIRTABLE_BASE}/${recordId}/${field}/uploadAttachment`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${AIRTABLE_PAT}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          contentType: mimeType,
+          filename: fileName,
+          file: fileBuffer.toString('base64')
+        })
+      }
+    );
+
+    const uploadData = await uploadRes.json();
+    if (uploadData.error || !uploadData.id) {
+      console.error('Airtable upload error:', uploadData);
+      return res.status(500).json({ success: false, error: uploadData.error || 'Airtable upload failed' });
+    }
+
+    res.json({ success: true, attachment: uploadData });
+  } catch (err) {
+    console.error('Upload error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
