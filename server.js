@@ -290,7 +290,8 @@ app.get('/airtable/scenes/single', authMiddleware, async (req, res) => {
         image: f.image || null,
         audio_EN: f.audio_EN || null,
         audio_TH: f.audio_TH || null,
-        video: f.video || null
+        video_EN: f.video_EN || null,
+        video_TH: f.video_TH || null
       }
     });
   } catch (err) {
@@ -311,7 +312,7 @@ app.get('/airtable/scenes', authMiddleware, async (req, res) => {
       'voiceover_sync_EN', 'voiceover_sync_TH',
       'image_prompt', 'negative_prompt',
       'Generate', 'image', 'status', 'task',
-      'audio_EN', 'audio_TH', 'video'
+      'audio_EN', 'audio_TH', 'video_EN', 'video_TH'
     ];
     const fieldParams = fields.map(f => `fields[]=${encodeURIComponent(f)}`).join('&');
     const filter = encodeURIComponent(`{job_id}="${jobRecordId}"`);
@@ -347,7 +348,7 @@ app.post('/airtable/scene/update', authMiddleware, async (req, res) => {
       'voiceover_sync_EN', 'voiceover_sync_TH',
       'Generate', 'status', 'task',
       // media clear (pass [] to remove attachment)
-      'image', 'audio_EN', 'audio_TH', 'video'
+      'image', 'audio_EN', 'audio_TH', 'video_EN', 'video_TH'
     ];
 
     const filtered = Object.keys(fields).reduce((acc, k) => {
@@ -407,7 +408,7 @@ app.post('/airtable/scene/upload', authMiddleware, async (req, res) => {
     if (!recordId || !field || !fileBuffer)
       return res.status(400).json({ success: false, error: 'Missing record_id, field, or file' });
 
-    const allowedFields = ['image', 'audio_EN', 'audio_TH', 'video'];
+    const allowedFields = ['image', 'audio_EN', 'audio_TH', 'video_EN', 'video_TH'];
     if (!allowedFields.includes(field))
       return res.status(400).json({ success: false, error: 'Field not allowed: ' + field });
 
