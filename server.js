@@ -22,13 +22,13 @@ const db = new Pool({
 });
 
 // ── CONFIG ────────────────────────────────────────────────
-const JWT_SECRET        = process.env.JWT_SECRET || 'superbiller-secret-change-me';
-const N8N_WEBHOOK       = process.env.N8N_WEBHOOK_URL;
-const AIRTABLE_BASE     = 'appwGBvGSWNq8BLfh';
-const AIRTABLE_TABLE    = 'tbliHRJwRfrQckb55';  // n8n_video
-const AIRTABLE_SCENES   = 'tblbtxQHxqIlsMrSd';  // video_production (scenes)
-const AIRTABLE_SCRIPT   = 'tblj00M8en7pmuwOn';
-const AIRTABLE_PAT      = process.env.AIRTABLE_PAT;
+const JWT_SECRET      = process.env.JWT_SECRET || 'superbiller-secret-change-me';
+const N8N_WEBHOOK     = process.env.N8N_WEBHOOK_URL;
+const AIRTABLE_BASE   = 'appwGBvGSWNq8BLfh';
+const AIRTABLE_TABLE  = 'tbliHRJwRfrQckb55';  // n8n_video
+const AIRTABLE_SCENES = 'tblbtxQHxqIlsMrSd';  // video_production
+const AIRTABLE_SCRIPT = 'tblj00M8en7pmuwOn';
+const AIRTABLE_PAT    = process.env.AIRTABLE_PAT;
 
 // ── SETUP DB ──────────────────────────────────────────────
 async function setupDB() {
@@ -131,7 +131,7 @@ app.get('/auth/verify', authMiddleware, (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════
-// VIDEO ROUTES (protected)
+// VIDEO ROUTES
 // ══════════════════════════════════════════════════════════
 
 app.post('/video', authMiddleware, async (req, res) => {
@@ -139,7 +139,7 @@ app.post('/video', authMiddleware, async (req, res) => {
     const email = req.user.email || '';
     const allowedDomains = ['@superbiller.com', '@recruitmenttraining'];
     if (!allowedDomains.some(d => email.endsWith(d)))
-      return res.status(403).json({ success: false, message: 'Access denied — unauthorized email domain.' });
+      return res.status(403).json({ success: false, message: 'Access denied.' });
     const r = await fetch(N8N_WEBHOOK, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -181,7 +181,36 @@ app.get('/airtable/videos', authMiddleware, async (req, res) => {
   }
 });
 
-// ── AIRTABLE — get scenes by n8n_video_row (job no) ───────
+app.post('/airtable/video/update', authMiddleware, async (req, res) => {
+  try {
+    const { record_id, fields } = req.body;
+    if (!record_id || !fields)
+      return res.status(400).json({ success: false, error: 'record_id and fields required' });
+    const data = await atFetch(`/${AIRTABLE_TABLE}/${record_id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ fields })
+    });
+    res.json({ success: true, record: data });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════
+// SCENE ROUTES
+// ══════════════════════════════════════════════════════════
+
+// DEBUG — see raw fields from video_production (remove after debugging)
+app.get('/airtable/scenes/debug', authMiddleware, async (req, res) => {
+  try {
+    const data = await atFetch(`/${AIRTABLE_SCENES}?maxRecords=3`);
+    res.json({ success: true, records: data.records });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET scenes
 app.get('/airtable/scenes', authMiddleware, async (req, res) => {
   try {
     const jobNo = req.query.job_no;
@@ -206,7 +235,7 @@ app.get('/airtable/scenes', authMiddleware, async (req, res) => {
   }
 });
 
-// ── AIRTABLE — update scene record ────────────────────────
+// UPDATE scene
 app.post('/airtable/scene/update', authMiddleware, async (req, res) => {
   try {
     const { record_id, fields } = req.body;
@@ -229,45 +258,8 @@ app.post('/airtable/scene/update', authMiddleware, async (req, res) => {
   }
 });
 
-// AIRTABLE — update video record
-app.post('/airtable/video/update', authMiddleware, async (req, res) => {
-  try {
-    const { record_id, fields } = req.body;
-    if (!record_id || !fields) return res.status(400).json({ success: false, error: 'record_id and fields required' });
-    const data = await atFetch(`/${AIRTABLE_TABLE}/${record_id}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ fields })
-    });
-    res.json({ success: true, record: data });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// AIRTABLE — update scene record
-app.post('/airtable/scene/update', authMiddleware, async (req, res) => {
-  try {
-    const { record_id, fields } = req.body;
-    if (!record_id || !fields) return res.status(400).json({ success: false, error: 'record_id and fields required' });
-    const allowed = ['image_prompt', 'negative_prompt', 'status'];
-    const filtered = Object.keys(fields).reduce(function(acc, k) {
-      if (allowed.includes(k)) acc[k] = fields[k];
-      return acc;
-    }, {});
-    if (Object.keys(filtered).length === 0)
-      return res.status(400).json({ success: false, error: 'No valid fields to update' });
-    const data = await atFetch(`/${AIRTABLE_SCENES}/${record_id}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ fields: filtered })
-    });
-    res.json({ success: true, record: data });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
 // ══════════════════════════════════════════════════════════
-// DASHBOARD ROUTES (protected)
+// DASHBOARD ROUTES
 // ══════════════════════════════════════════════════════════
 
 app.get('/dashboard/pipeline', authMiddleware, async (req, res) => {
