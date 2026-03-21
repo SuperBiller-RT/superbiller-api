@@ -200,11 +200,11 @@ app.post('/airtable/video/update', authMiddleware, async (req, res) => {
 // SCENE ROUTES
 // ══════════════════════════════════════════════════════════
 
-// DEBUG — see raw fields from video_production (remove after debugging)
+// DEBUG — see raw Airtable response (remove after debugging)
 app.get('/airtable/scenes/debug', authMiddleware, async (req, res) => {
   try {
     const data = await atFetch(`/${AIRTABLE_SCENES}?maxRecords=3`);
-    res.json({ success: true, records: data.records });
+    res.json({ success: true, raw: data }); // return everything raw
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
