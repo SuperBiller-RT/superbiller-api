@@ -202,7 +202,7 @@ app.post('/airtable/video/update', authMiddleware, async (req, res) => {
     if (!record_id || !fields)
       return res.status(400).json({ success: false, error: 'record_id and fields required' });
     // Only allow safe fields to be updated on the job record
-    const ALLOWED_VIDEO_FIELDS = ['status ( **required** )', 'title', 'title_th', 'script_en', 'script_th', 'avater'];
+    const ALLOWED_VIDEO_FIELDS = ['status ( **required** )', 'title', 'title_th', 'script_en', 'script_th', 'voice_id', 'avatar_gender', 'avatar_name'];
     const filtered = Object.keys(fields).reduce((acc, k) => {
       if (ALLOWED_VIDEO_FIELDS.includes(k)) acc[k] = fields[k];
       return acc;
