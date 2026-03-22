@@ -202,7 +202,7 @@ app.post('/airtable/video/update', authMiddleware, async (req, res) => {
     if (!record_id || !fields)
       return res.status(400).json({ success: false, error: 'record_id and fields required' });
     // Only allow safe fields to be updated on the job record
-    const ALLOWED_VIDEO_FIELDS = ['status ( **required** )', 'title', 'title_th', 'script_en', 'script_th', 'voice_id', 'avatar_gender', 'avatar_name'];
+    const ALLOWED_VIDEO_FIELDS = ['status ( **required** )', 'title', 'title_th', 'script_en', 'script_th', 'voice_id', 'avatar_name'];
     const filtered = Object.keys(fields).reduce((acc, k) => {
       if (ALLOWED_VIDEO_FIELDS.includes(k)) acc[k] = fields[k];
       return acc;
@@ -351,7 +351,7 @@ app.post('/airtable/scene/update', authMiddleware, async (req, res) => {
       'Generate', 'status', 'task',
       'scene_number', 'scene_type', 'pacing', 'estimated_duration_secs',
       'image', 'audio_EN', 'audio_TH', 'video_EN', 'full_audio_EN', 'full_audio_TH',
-      'voice_id', 'avatar_gender'
+      'voice_id'
     ];
 
     const filtered = Object.keys(fields).reduce((acc, k) => {
@@ -384,7 +384,7 @@ app.post('/airtable/scenes/batch-update', authMiddleware, async (req, res) => {
       'scene_number', 'scene_type', 'pacing', 'estimated_duration_secs',
       'image_prompt', 'negative_prompt', 'voiceover_sync_EN', 'voiceover_sync_TH',
       'Generate', 'status', 'task',
-      'avatar_gender', 'avatar_name', 'voice_id'
+      'avatar_name', 'voice_id'
     ];
 
     const records = updates.map(u => ({
