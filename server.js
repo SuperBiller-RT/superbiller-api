@@ -201,9 +201,17 @@ app.post('/airtable/video/update', authMiddleware, async (req, res) => {
     const { record_id, fields } = req.body;
     if (!record_id || !fields)
       return res.status(400).json({ success: false, error: 'record_id and fields required' });
+    // Only allow safe fields to be updated on the job record
+    const ALLOWED_VIDEO_FIELDS = ['status ( **required** )', 'title', 'title_th', 'script_en', 'script_th', 'avater'];
+    const filtered = Object.keys(fields).reduce((acc, k) => {
+      if (ALLOWED_VIDEO_FIELDS.includes(k)) acc[k] = fields[k];
+      return acc;
+    }, {});
+    if (Object.keys(filtered).length === 0)
+      return res.status(400).json({ success: false, error: 'No valid fields to update' });
     const data = await atFetch(`/${AIRTABLE_TABLE}/${record_id}`, {
       method: 'PATCH',
-      body: JSON.stringify({ fields })
+      body: JSON.stringify({ fields: filtered })
     });
     res.json({ success: true, record: data });
   } catch (err) {
@@ -286,8 +294,7 @@ app.get('/airtable/scenes/single', authMiddleware, async (req, res) => {
         video_EN: f.video_EN || null,
         full_audio_EN: f.full_audio_EN || null,
         full_audio_TH: f.full_audio_TH || null,
-        full_video: f.full_video || null
-      }
+              }
     });
   } catch (err) {
     console.error('scenes/single error:', err.message);
@@ -307,7 +314,7 @@ app.get('/airtable/scenes', authMiddleware, async (req, res) => {
       'voiceover_sync_EN', 'voiceover_sync_TH',
       'image_prompt', 'negative_prompt',
       'Generate', 'image', 'status', 'task',
-      'audio_EN', 'audio_TH', 'video_EN', 'full_audio_EN', 'full_audio_TH', 'full_video'
+      'audio_EN', 'audio_TH', 'video_EN', 'full_audio_EN', 'full_audio_TH'
     ];
     const fieldParams = fields.map(f => `fields[]=${encodeURIComponent(f)}`).join('&');
     const filter = encodeURIComponent(`{job_id}="${jobRecordId}"`);
@@ -343,7 +350,7 @@ app.post('/airtable/scene/update', authMiddleware, async (req, res) => {
       'voiceover_sync_EN', 'voiceover_sync_TH',
       'Generate', 'status', 'task',
       'scene_number', 'scene_type', 'pacing', 'estimated_duration_secs',
-      'image', 'audio_EN', 'audio_TH', 'video_EN', 'full_audio_EN', 'full_audio_TH', 'full_video'
+      'image', 'audio_EN', 'audio_TH', 'video_EN', 'full_audio_EN', 'full_audio_TH'
     ];
 
     const filtered = Object.keys(fields).reduce((acc, k) => {
@@ -375,7 +382,8 @@ app.post('/airtable/scenes/batch-update', authMiddleware, async (req, res) => {
     const allowed = [
       'scene_number', 'scene_type', 'pacing', 'estimated_duration_secs',
       'image_prompt', 'negative_prompt', 'voiceover_sync_EN', 'voiceover_sync_TH',
-      'Generate', 'status', 'task'
+      'Generate', 'status', 'task',
+      'avatar_gender', 'avatar_name', 'voice_id'
     ];
 
     const records = updates.map(u => ({
@@ -443,7 +451,7 @@ app.post('/airtable/scene/upload', authMiddleware, async (req, res) => {
     if (!recordId || !field || !fileBuffer)
       return res.status(400).json({ success: false, error: 'Missing record_id, field, or file' });
 
-    const allowedFields = ['image', 'video_EN', 'full_video'];
+    const allowedFields = ['image', 'video_EN'];
     if (!allowedFields.includes(field))
       return res.status(400).json({ success: false, error: 'Field not allowed: ' + field });
 
