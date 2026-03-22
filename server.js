@@ -349,6 +349,7 @@ app.post('/airtable/scene/update', authMiddleware, async (req, res) => {
       'image_prompt', 'negative_prompt',
       'voiceover_sync_EN', 'voiceover_sync_TH',
       'Generate', 'status', 'task',
+      'scene_number', 'scene_type', 'pacing', 'estimated_duration_secs',
       // media clear (pass [] to remove attachment)
       'image', 'audio_EN', 'audio_TH', 'video_EN', 'full_audio_EN', 'full_audio_TH', 'full_video'
     ];
