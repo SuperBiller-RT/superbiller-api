@@ -575,17 +575,19 @@ app.post('/airtable/scene/create', authMiddleware, async (req, res) => {
     if (!job_record_id)
       return res.status(400).json({ success: false, error: 'job_record_id required' });
     // job_id is a linked record field — must be an array of record IDs
+    // job_id in video_production is a plain text field (stores record ID as string)
+    // NOT a linked record field — so pass as plain string, not array
     const fields = {
-      job_id: [job_record_id],
+      job_id: job_record_id,
       scene_number: after_scene_number + 1,
       status: 'IDLE'
     };
-    console.log('Creating scene with fields:', JSON.stringify(fields));
+    console.log('Creating scene:', JSON.stringify(fields));
     const data = await atFetch(`/${AIRTABLE_SCENES}`, {
       method: 'POST',
       body: JSON.stringify({ fields })
     });
-    console.log('Airtable create response:', JSON.stringify(data));
+    console.log('Airtable response:', JSON.stringify(data));
     if (data.error) return res.status(500).json({ success: false, error: typeof data.error === 'object' ? JSON.stringify(data.error) : data.error });
     res.json({ success: true, record: data });
   } catch (err) {
