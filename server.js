@@ -410,7 +410,7 @@ app.post('/airtable/scene/upload', authMiddleware, async (req, res) => {
     if (!recordId || !field || !fileBuffer)
       return res.status(400).json({ success: false, error: 'Missing record_id, field, or file' });
 
-    const allowedFields = ['image', 'audio_EN', 'audio_TH', 'video_EN', 'full_video'];
+    const allowedFields = ['image', 'video_EN', 'full_video'];
     if (!allowedFields.includes(field))
       return res.status(400).json({ success: false, error: 'Field not allowed: ' + field });
 
