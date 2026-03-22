@@ -569,6 +569,50 @@ app.get('/dashboard/weekly', authMiddleware, async (req, res) => {
   }
 });
 
+// ── BATCH UPDATE scene fields ────────────────────────────
+// Accepts: [ { record_id, fields: {...} }, ... ] — max 200 records
+// Sends to Airtable in chunks of 10 (their batch limit)
+app.post('/airtable/scenes/batch-update', authMiddleware, async (req, res) => {
+  try {
+    const { updates } = req.body;
+    if (!updates || !Array.isArray(updates) || updates.length === 0)
+      return res.status(400).json({ success: false, error: 'updates array required' });
+
+    const allowed = ['scene_number', 'scene_type', 'pacing', 'estimated_duration_secs',
+      'image_prompt', 'negative_prompt', 'voiceover_sync_EN', 'voiceover_sync_TH',
+      'Generate', 'status', 'task'];
+
+    // Build Airtable records array
+    const records = updates.map(u => ({
+      id: u.record_id,
+      fields: Object.keys(u.fields).reduce((acc, k) => {
+        if (allowed.includes(k)) acc[k] = u.fields[k];
+        return acc;
+      }, {})
+    })).filter(r => Object.keys(r.fields).length > 0);
+
+    if (records.length === 0)
+      return res.status(400).json({ success: false, error: 'No valid fields to update' });
+
+    // Chunk into groups of 10 (Airtable batch limit)
+    const chunks = [];
+    for (let i = 0; i < records.length; i += 10) chunks.push(records.slice(i, i + 10));
+
+    // Send chunks sequentially to respect rate limits
+    for (const chunk of chunks) {
+      const data = await atFetch(`/${AIRTABLE_SCENES}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ records: chunk })
+      });
+      if (data.error) return res.status(500).json({ success: false, error: data.error });
+    }
+
+    res.json({ success: true, updated: records.length });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ── CREATE scene row ─────────────────────────────────────
 app.post('/airtable/scene/create', authMiddleware, async (req, res) => {
   try {
