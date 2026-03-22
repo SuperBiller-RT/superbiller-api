@@ -350,7 +350,8 @@ app.post('/airtable/scene/update', authMiddleware, async (req, res) => {
       'voiceover_sync_EN', 'voiceover_sync_TH',
       'Generate', 'status', 'task',
       'scene_number', 'scene_type', 'pacing', 'estimated_duration_secs',
-      'image', 'audio_EN', 'audio_TH', 'video_EN', 'full_audio_EN', 'full_audio_TH'
+      'image', 'audio_EN', 'audio_TH', 'video_EN', 'full_audio_EN', 'full_audio_TH',
+      'voice_id', 'avatar_gender'
     ];
 
     const filtered = Object.keys(fields).reduce((acc, k) => {
