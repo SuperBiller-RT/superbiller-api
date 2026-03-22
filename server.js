@@ -568,6 +568,48 @@ app.get('/dashboard/weekly', authMiddleware, async (req, res) => {
   }
 });
 
+// ── CREATE scene row ─────────────────────────────────────
+app.post('/airtable/scene/create', authMiddleware, async (req, res) => {
+  try {
+    const { job_record_id, after_scene_number = 0 } = req.body;
+    if (!job_record_id)
+      return res.status(400).json({ success: false, error: 'job_record_id required' });
+    // Create a blank scene linked to the job
+    const data = await atFetch(`/${AIRTABLE_SCENES}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        fields: {
+          job_id: [job_record_id],
+          scene_number: after_scene_number + 1,
+          status: 'IDLE'
+        }
+      })
+    });
+    if (data.error) return res.status(500).json({ success: false, error: data.error });
+    res.json({ success: true, record: data });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── DELETE scene row ──────────────────────────────────────
+app.post('/airtable/scene/delete', authMiddleware, async (req, res) => {
+  try {
+    const { record_id } = req.body;
+    if (!record_id)
+      return res.status(400).json({ success: false, error: 'record_id required' });
+    const r = await fetch(`https://api.airtable.com/v0/${AIRTABLE_BASE}/${AIRTABLE_SCENES}/${record_id}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${AIRTABLE_PAT}` }
+    });
+    const data = await r.json();
+    if (data.error) return res.status(500).json({ success: false, error: data.error });
+    res.json({ success: true, deleted: data.deleted });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ── POSTGRES — raw query ──────────────────────────────────
 app.post('/db/query', authMiddleware, async (req, res) => {
   try {
