@@ -215,7 +215,6 @@ app.post('/airtable/video/update', authMiddleware, async (req, res) => {
 // SCENE ROUTES
 // ══════════════════════════════════════════════════════════
 
-// DEBUG
 app.get('/airtable/scenes/debug', authMiddleware, async (req, res) => {
   try {
     const data = await atFetch(`/${AIRTABLE_SCENES}?maxRecords=3`);
@@ -255,13 +254,8 @@ app.post('/notify/scene', async (req, res) => {
     const { record_id, status, task } = req.body;
     if (!record_id || !status)
       return res.status(400).json({ success: false, error: 'record_id and status required' });
-
     const payload = JSON.stringify({ record_id, status, task: task || '' });
-
-    clients.forEach((clientRes) => {
-      clientRes.write(`data: ${payload}\n\n`);
-    });
-
+    clients.forEach((clientRes) => { clientRes.write(`data: ${payload}\n\n`); });
     res.json({ success: true, notified: clients.size });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -273,7 +267,6 @@ app.get('/airtable/scenes/single', authMiddleware, async (req, res) => {
     const recordId = req.query.record_id;
     if (!recordId)
       return res.status(400).json({ success: false, error: 'record_id required' });
-    // Use raw fetch without Content-Type header (GET request)
     const r = await fetch(`https://api.airtable.com/v0/${AIRTABLE_BASE}/${AIRTABLE_SCENES}/${recordId}`, {
       headers: { 'Authorization': `Bearer ${AIRTABLE_PAT}` }
     });
@@ -350,19 +343,16 @@ app.post('/airtable/scene/update', authMiddleware, async (req, res) => {
       'voiceover_sync_EN', 'voiceover_sync_TH',
       'Generate', 'status', 'task',
       'scene_number', 'scene_type', 'pacing', 'estimated_duration_secs',
-      // media clear (pass [] to remove attachment)
       'image', 'audio_EN', 'audio_TH', 'video_EN', 'full_audio_EN', 'full_audio_TH', 'full_video'
     ];
 
     const filtered = Object.keys(fields).reduce((acc, k) => {
-      // Allow all values including empty string and empty array (used to clear fields)
       if (allowed.includes(k)) acc[k] = fields[k];
       return acc;
     }, {});
 
     if (Object.keys(filtered).length === 0)
       return res.status(400).json({ success: false, error: 'No valid fields to update' });
-    // Note: null and [] are valid values (used to clear fields)
 
     const data = await atFetch(`/${AIRTABLE_SCENES}/${record_id}`, {
       method: 'PATCH',
@@ -374,7 +364,49 @@ app.post('/airtable/scene/update', authMiddleware, async (req, res) => {
   }
 });
 
-// ── UPLOAD MEDIA (image / audio / video) to Airtable ─────
+// ── BATCH UPDATE scene fields ─────────────────────────────
+// Accepts: [{ record_id, fields }] — sends to Airtable in chunks of 10
+app.post('/airtable/scenes/batch-update', authMiddleware, async (req, res) => {
+  try {
+    const { updates } = req.body;
+    if (!updates || !Array.isArray(updates) || updates.length === 0)
+      return res.status(400).json({ success: false, error: 'updates array required' });
+
+    const allowed = [
+      'scene_number', 'scene_type', 'pacing', 'estimated_duration_secs',
+      'image_prompt', 'negative_prompt', 'voiceover_sync_EN', 'voiceover_sync_TH',
+      'Generate', 'status', 'task'
+    ];
+
+    const records = updates.map(u => ({
+      id: u.record_id,
+      fields: Object.keys(u.fields).reduce((acc, k) => {
+        if (allowed.includes(k)) acc[k] = u.fields[k];
+        return acc;
+      }, {})
+    })).filter(r => Object.keys(r.fields).length > 0);
+
+    if (records.length === 0)
+      return res.status(400).json({ success: false, error: 'No valid fields to update' });
+
+    const chunks = [];
+    for (let i = 0; i < records.length; i += 10) chunks.push(records.slice(i, i + 10));
+
+    for (const chunk of chunks) {
+      const data = await atFetch(`/${AIRTABLE_SCENES}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ records: chunk })
+      });
+      if (data.error) return res.status(500).json({ success: false, error: data.error });
+    }
+
+    res.json({ success: true, updated: records.length });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── UPLOAD MEDIA (image / video) to Airtable ─────────────
 app.post('/airtable/scene/upload', authMiddleware, async (req, res) => {
   try {
     const body = req.rawBody;
@@ -415,20 +447,12 @@ app.post('/airtable/scene/upload', authMiddleware, async (req, res) => {
     if (!allowedFields.includes(field))
       return res.status(400).json({ success: false, error: 'Field not allowed: ' + field });
 
-    // Use Airtable's upload attachment endpoint (base64)
     const uploadRes = await fetch(
       `https://content.airtable.com/v0/${AIRTABLE_BASE}/${recordId}/${field}/uploadAttachment`,
       {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${AIRTABLE_PAT}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          contentType: mimeType,
-          filename: fileName,
-          file: fileBuffer.toString('base64')
-        })
+        headers: { 'Authorization': `Bearer ${AIRTABLE_PAT}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contentType: mimeType, filename: fileName, file: fileBuffer.toString('base64') })
       }
     );
 
@@ -441,6 +465,51 @@ app.post('/airtable/scene/upload', authMiddleware, async (req, res) => {
     res.json({ success: true, attachment: uploadData });
   } catch (err) {
     console.error('Upload error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── CREATE scene row ──────────────────────────────────────
+app.post('/airtable/scene/create', authMiddleware, async (req, res) => {
+  try {
+    const { job_record_id, after_scene_number } = req.body;
+    if (!job_record_id)
+      return res.status(400).json({ success: false, error: 'job_record_id required' });
+    // after_scene_number is the exact scene_number to assign — computed by frontend to avoid duplicates
+    const fields = {
+      job_id: job_record_id,
+      scene_number: after_scene_number || 1,
+      status: 'IDLE'
+    };
+    const data = await atFetch(`/${AIRTABLE_SCENES}`, {
+      method: 'POST',
+      body: JSON.stringify({ fields })
+    });
+    if (data.error) {
+      const errMsg = typeof data.error === 'object' ? JSON.stringify(data.error) : data.error;
+      return res.status(500).json({ success: false, error: errMsg });
+    }
+    res.json({ success: true, record: data });
+  } catch (err) {
+    console.error('Scene create error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── DELETE scene row ──────────────────────────────────────
+app.post('/airtable/scene/delete', authMiddleware, async (req, res) => {
+  try {
+    const { record_id } = req.body;
+    if (!record_id)
+      return res.status(400).json({ success: false, error: 'record_id required' });
+    const r = await fetch(`https://api.airtable.com/v0/${AIRTABLE_BASE}/${AIRTABLE_SCENES}/${record_id}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${AIRTABLE_PAT}` }
+    });
+    const data = await r.json();
+    if (data.error) return res.status(500).json({ success: false, error: data.error });
+    res.json({ success: true, deleted: data.deleted });
+  } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -564,96 +633,6 @@ app.get('/dashboard/weekly', authMiddleware, async (req, res) => {
       weeks.push({ week: `W${8 - i}`, count });
     }
     res.json({ success: true, weeks });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// ── BATCH UPDATE scene fields ────────────────────────────
-// Accepts: [ { record_id, fields: {...} }, ... ] — max 200 records
-// Sends to Airtable in chunks of 10 (their batch limit)
-app.post('/airtable/scenes/batch-update', authMiddleware, async (req, res) => {
-  try {
-    const { updates } = req.body;
-    if (!updates || !Array.isArray(updates) || updates.length === 0)
-      return res.status(400).json({ success: false, error: 'updates array required' });
-
-    const allowed = ['scene_number', 'scene_type', 'pacing', 'estimated_duration_secs',
-      'image_prompt', 'negative_prompt', 'voiceover_sync_EN', 'voiceover_sync_TH',
-      'Generate', 'status', 'task'];
-
-    // Build Airtable records array
-    const records = updates.map(u => ({
-      id: u.record_id,
-      fields: Object.keys(u.fields).reduce((acc, k) => {
-        if (allowed.includes(k)) acc[k] = u.fields[k];
-        return acc;
-      }, {})
-    })).filter(r => Object.keys(r.fields).length > 0);
-
-    if (records.length === 0)
-      return res.status(400).json({ success: false, error: 'No valid fields to update' });
-
-    // Chunk into groups of 10 (Airtable batch limit)
-    const chunks = [];
-    for (let i = 0; i < records.length; i += 10) chunks.push(records.slice(i, i + 10));
-
-    // Send chunks sequentially to respect rate limits
-    for (const chunk of chunks) {
-      const data = await atFetch(`/${AIRTABLE_SCENES}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ records: chunk })
-      });
-      if (data.error) return res.status(500).json({ success: false, error: data.error });
-    }
-
-    res.json({ success: true, updated: records.length });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// ── CREATE scene row ─────────────────────────────────────
-app.post('/airtable/scene/create', authMiddleware, async (req, res) => {
-  try {
-    const { job_record_id, after_scene_number = 0 } = req.body;
-    if (!job_record_id)
-      return res.status(400).json({ success: false, error: 'job_record_id required' });
-    // job_id is a linked record field — must be an array of record IDs
-    // job_id in video_production is a plain text field (stores record ID as string)
-    // NOT a linked record field — so pass as plain string, not array
-    const fields = {
-      job_id: job_record_id,
-      scene_number: after_scene_number + 1,
-      status: 'IDLE'
-    };
-    console.log('Creating scene:', JSON.stringify(fields));
-    const data = await atFetch(`/${AIRTABLE_SCENES}`, {
-      method: 'POST',
-      body: JSON.stringify({ fields })
-    });
-    console.log('Airtable response:', JSON.stringify(data));
-    if (data.error) return res.status(500).json({ success: false, error: typeof data.error === 'object' ? JSON.stringify(data.error) : data.error });
-    res.json({ success: true, record: data });
-  } catch (err) {
-    console.error('Scene create error:', err);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// ── DELETE scene row ──────────────────────────────────────
-app.post('/airtable/scene/delete', authMiddleware, async (req, res) => {
-  try {
-    const { record_id } = req.body;
-    if (!record_id)
-      return res.status(400).json({ success: false, error: 'record_id required' });
-    const r = await fetch(`https://api.airtable.com/v0/${AIRTABLE_BASE}/${AIRTABLE_SCENES}/${record_id}`, {
-      method: 'DELETE',
-      headers: { 'Authorization': `Bearer ${AIRTABLE_PAT}` }
-    });
-    const data = await r.json();
-    if (data.error) return res.status(500).json({ success: false, error: data.error });
-    res.json({ success: true, deleted: data.deleted });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
