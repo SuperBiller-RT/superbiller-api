@@ -37,15 +37,16 @@ const db = new Pool({
 });
 
 // ── CONFIG ────────────────────────────────────────────────
-const JWT_SECRET        = process.env.JWT_SECRET || 'superbiller-secret-change-me';
-const N8N_WEBHOOK       = process.env.N8N_WEBHOOK_URL;
-const AIRTABLE_BASE     = 'appwGBvGSWNq8BLfh';
-const AIRTABLE_TABLE    = 'tbliHRJwRfrQckb55';  // n8n_video
-const AIRTABLE_SCENES   = 'tblbtxQHxqllsMrSd';  // video_production
-const AIRTABLE_SCRIPT   = 'tblj00M8en7pmuwOn';
-const AIRTABLE_PAT      = process.env.AIRTABLE_PAT;
-const API_BASE_URL      = process.env.API_BASE_URL || 'https://superbiller-api-production.up.railway.app';
-const PROPERTY_WEBHOOK  = 'https://primary-production-ab4a6.up.railway.app/webhook/28property';
+const JWT_SECRET         = process.env.JWT_SECRET || 'superbiller-secret-change-me';
+const N8N_WEBHOOK        = process.env.N8N_WEBHOOK_URL;
+const AIRTABLE_BASE      = 'appwGBvGSWNq8BLfh';
+const AIRTABLE_TABLE     = 'tbliHRJwRfrQckb55';  // n8n_video
+const AIRTABLE_SCENES    = 'tblbtxQHxqllsMrSd';  // video_production
+const AIRTABLE_SCRIPT    = 'tblj00M8en7pmuwOn';
+const AIRTABLE_PROPERTY  = 'tbltqZuJcIfwit1JQ';  // 28property
+const AIRTABLE_PAT       = process.env.AIRTABLE_PAT;
+const API_BASE_URL       = process.env.API_BASE_URL || 'https://superbiller-api-production.up.railway.app';
+const PROPERTY_WEBHOOK   = 'https://primary-production-ab4a6.up.railway.app/webhook/28property';
 
 // ── SETUP DB ──────────────────────────────────────────────
 async function setupDB() {
@@ -61,7 +62,7 @@ async function setupDB() {
     )
   `);
 
-  // 28Property agent images table
+  // 28Property agent images
   await db.query(`
     CREATE TABLE IF NOT EXISTS property_agent_images (
       id SERIAL PRIMARY KEY,
@@ -672,9 +673,8 @@ app.post('/db/query', authMiddleware, async (req, res) => {
 // 28PROPERTY ROUTES
 // ══════════════════════════════════════════════════════════
 
-// ── UPLOAD AGENT PHOTO ───────────────────────────────────
+// ── UPLOAD AGENT PHOTO ────────────────────────────────────
 // POST /28property/upload  (multipart: file, agent_name?)
-// Stores image as BYTEA in Postgres, returns image_id + public URL
 app.post('/28property/upload', authMiddleware, async (req, res) => {
   try {
     const body = req.rawBody;
@@ -737,8 +737,8 @@ app.post('/28property/upload', authMiddleware, async (req, res) => {
   }
 });
 
-// ── SERVE AGENT PHOTO ────────────────────────────────────
-// GET /28property/image/:id  (public — no auth, so n8n can fetch it)
+// ── SERVE AGENT PHOTO ─────────────────────────────────────
+// GET /28property/image/:id  (public — no auth so n8n can fetch)
 app.get('/28property/image/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
@@ -764,10 +764,10 @@ app.get('/28property/image/:id', async (req, res) => {
   }
 });
 
-// ── START VIDEO PRODUCTION ───────────────────────────────
+// ── START VIDEO PRODUCTION ────────────────────────────────
 // POST /28property/start
 // Body: { property_url, image_id, agent_name }
-// Fires n8n webhook with all data including the public image URL
+// Fires n8n webhook — n8n then creates the Airtable row itself
 app.post('/28property/start', authMiddleware, async (req, res) => {
   try {
     const { property_url, image_id, agent_name } = req.body;
@@ -805,26 +805,22 @@ app.post('/28property/start', authMiddleware, async (req, res) => {
     let data;
     try { data = JSON.parse(text); } catch { data = { raw: text }; }
 
-    res.json({ success: true, n8n: data, payload_sent: payload });
+    res.json({ success: true, n8n: data });
   } catch (err) {
     console.error('28property start error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// ── LIST RECENT JOBS (per user) ───────────────────────────
+// ── LIST 28PROPERTY JOBS from Airtable ────────────────────
 // GET /28property/jobs
+// Polls the tbltqZuJcIfwit1JQ table, sorted newest first
 app.get('/28property/jobs', authMiddleware, async (req, res) => {
   try {
-    const result = await db.query(
-      `SELECT id, filename, mime_type, agent_name, user_email, created_at
-       FROM property_agent_images
-       WHERE user_email = $1
-       ORDER BY created_at DESC
-       LIMIT 20`,
-      [req.user.email]
+    const data = await atFetch(
+      `/${AIRTABLE_PROPERTY}?maxRecords=50&sort[0][field]=no&sort[0][direction]=desc`
     );
-    res.json({ success: true, records: result.rows });
+    res.json({ success: true, records: data.records || [] });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
