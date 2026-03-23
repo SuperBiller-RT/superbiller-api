@@ -170,7 +170,7 @@ app.post('/video', authMiddleware, async (req, res) => {
 
 app.post('/airtable/video', authMiddleware, async (req, res) => {
   try {
-    const { industry, search_focus, pipeline, status = 'Start', user_email } = req.body;
+    const { industry, search_focus, pipeline, status = 'Start', user_email, notes } = req.body;
     const data = await atFetch(`/${AIRTABLE_TABLE}`, {
       method: 'POST',
       body: JSON.stringify({ fields: {
@@ -178,7 +178,8 @@ app.post('/airtable/video', authMiddleware, async (req, res) => {
         'search_focus ( **required** )': search_focus,
         'pipeline ( **required** )': pipeline,
         'status ( **required** )': status,
-        'user': user_email || req.user.email || ''
+        'user': user_email || req.user.email || '',
+        ...(notes ? { 'notes': notes } : {})
       }})
     });
     res.json({ success: true, record: data });
