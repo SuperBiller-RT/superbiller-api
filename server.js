@@ -37,16 +37,19 @@ const db = new Pool({
 });
 
 // ── CONFIG ────────────────────────────────────────────────
-const JWT_SECRET      = process.env.JWT_SECRET || 'superbiller-secret-change-me';
-const N8N_WEBHOOK     = process.env.N8N_WEBHOOK_URL;
-const AIRTABLE_BASE   = 'appwGBvGSWNq8BLfh';
-const AIRTABLE_TABLE  = 'tbliHRJwRfrQckb55';  // n8n_video
-const AIRTABLE_SCENES = 'tblbtxQHxqllsMrSd';  // video_production
-const AIRTABLE_SCRIPT = 'tblj00M8en7pmuwOn';
-const AIRTABLE_PAT    = process.env.AIRTABLE_PAT;
+const JWT_SECRET        = process.env.JWT_SECRET || 'superbiller-secret-change-me';
+const N8N_WEBHOOK       = process.env.N8N_WEBHOOK_URL;
+const AIRTABLE_BASE     = 'appwGBvGSWNq8BLfh';
+const AIRTABLE_TABLE    = 'tbliHRJwRfrQckb55';  // n8n_video
+const AIRTABLE_SCENES   = 'tblbtxQHxqllsMrSd';  // video_production
+const AIRTABLE_SCRIPT   = 'tblj00M8en7pmuwOn';
+const AIRTABLE_PAT      = process.env.AIRTABLE_PAT;
+const API_BASE_URL      = process.env.API_BASE_URL || 'https://superbiller-api-production.up.railway.app';
+const PROPERTY_WEBHOOK  = 'https://primary-production-ab4a6.up.railway.app/webhook/28property';
 
 // ── SETUP DB ──────────────────────────────────────────────
 async function setupDB() {
+  // Users table
   await db.query(`
     CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
@@ -57,6 +60,20 @@ async function setupDB() {
       created_at TIMESTAMP DEFAULT NOW()
     )
   `);
+
+  // 28Property agent images table
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS property_agent_images (
+      id SERIAL PRIMARY KEY,
+      filename VARCHAR(255),
+      mime_type VARCHAR(100),
+      data BYTEA NOT NULL,
+      agent_name VARCHAR(200),
+      user_email VARCHAR(200),
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+
   console.log('DB ready');
 }
 setupDB().catch(console.error);
@@ -202,7 +219,6 @@ app.post('/airtable/video/update', authMiddleware, async (req, res) => {
     const { record_id, fields } = req.body;
     if (!record_id || !fields)
       return res.status(400).json({ success: false, error: 'record_id and fields required' });
-    // Only allow safe fields to be updated on the job record
     const ALLOWED_VIDEO_FIELDS = ['status ( **required** )', 'title', 'title_th', 'script_en', 'script_th', 'voice_id', 'avatar_name'];
     const filtered = Object.keys(fields).reduce((acc, k) => {
       if (ALLOWED_VIDEO_FIELDS.includes(k)) acc[k] = fields[k];
@@ -295,7 +311,7 @@ app.get('/airtable/scenes/single', authMiddleware, async (req, res) => {
         video_EN: f.video_EN || null,
         full_audio_EN: f.full_audio_EN || null,
         full_audio_TH: f.full_audio_TH || null,
-              }
+      }
     });
   } catch (err) {
     console.error('scenes/single error:', err.message);
@@ -339,7 +355,6 @@ app.get('/airtable/scenes', authMiddleware, async (req, res) => {
   }
 });
 
-// ── UPDATE scene fields ───────────────────────────────────
 app.post('/airtable/scene/update', authMiddleware, async (req, res) => {
   try {
     const { record_id, fields } = req.body;
@@ -373,8 +388,6 @@ app.post('/airtable/scene/update', authMiddleware, async (req, res) => {
   }
 });
 
-// ── BATCH UPDATE scene fields ─────────────────────────────
-// Accepts: [{ record_id, fields }] — sends to Airtable in chunks of 10
 app.post('/airtable/scenes/batch-update', authMiddleware, async (req, res) => {
   try {
     const { updates } = req.body;
@@ -416,7 +429,6 @@ app.post('/airtable/scenes/batch-update', authMiddleware, async (req, res) => {
   }
 });
 
-// ── UPLOAD MEDIA (image / video) to Airtable ─────────────
 app.post('/airtable/scene/upload', authMiddleware, async (req, res) => {
   try {
     const body = req.rawBody;
@@ -479,13 +491,11 @@ app.post('/airtable/scene/upload', authMiddleware, async (req, res) => {
   }
 });
 
-// ── CREATE scene row ──────────────────────────────────────
 app.post('/airtable/scene/create', authMiddleware, async (req, res) => {
   try {
     const { job_record_id, after_scene_number } = req.body;
     if (!job_record_id)
       return res.status(400).json({ success: false, error: 'job_record_id required' });
-    // after_scene_number is the exact scene_number to assign — computed by frontend to avoid duplicates
     const fields = {
       job_id: job_record_id,
       scene_number: after_scene_number || 1,
@@ -506,7 +516,6 @@ app.post('/airtable/scene/create', authMiddleware, async (req, res) => {
   }
 });
 
-// ── DELETE scene row ──────────────────────────────────────
 app.post('/airtable/scene/delete', authMiddleware, async (req, res) => {
   try {
     const { record_id } = req.body;
@@ -659,5 +668,168 @@ app.post('/db/query', authMiddleware, async (req, res) => {
   }
 });
 
+// ══════════════════════════════════════════════════════════
+// 28PROPERTY ROUTES
+// ══════════════════════════════════════════════════════════
+
+// ── UPLOAD AGENT PHOTO ───────────────────────────────────
+// POST /28property/upload  (multipart: file, agent_name?)
+// Stores image as BYTEA in Postgres, returns image_id + public URL
+app.post('/28property/upload', authMiddleware, async (req, res) => {
+  try {
+    const body = req.rawBody;
+    if (!body) return res.status(400).json({ success: false, error: 'No body received' });
+
+    const contentType = req.headers['content-type'] || '';
+    const boundaryMatch = contentType.match(/boundary=(.+)$/);
+    if (!boundaryMatch) return res.status(400).json({ success: false, error: 'No boundary in content-type' });
+    const boundary = boundaryMatch[1].trim();
+
+    const parts = body.toString('binary').split('--' + boundary);
+    let fileBuffer = null;
+    let fileName    = 'agent-photo';
+    let mimeType    = 'image/jpeg';
+    let agentName   = '';
+
+    for (const part of parts) {
+      if (!part.includes('Content-Disposition')) continue;
+      const nameMatch     = part.match(/name="([^"]+)"/);
+      const filenameMatch = part.match(/filename="([^"]+)"/);
+      const ctMatch       = part.match(/Content-Type: ([^\r\n]+)/);
+      const name          = nameMatch ? nameMatch[1] : '';
+      const headerEnd     = part.indexOf('\r\n\r\n');
+      if (headerEnd === -1) continue;
+      const value = part.slice(headerEnd + 4, part.lastIndexOf('\r\n'));
+
+      if (name === 'agent_name') {
+        agentName = value.trim();
+      } else if (filenameMatch) {
+        fileName   = filenameMatch[1];
+        mimeType   = ctMatch ? ctMatch[1].trim() : 'image/jpeg';
+        fileBuffer = Buffer.from(value, 'binary');
+      }
+    }
+
+    if (!fileBuffer)
+      return res.status(400).json({ success: false, error: 'No image file received' });
+
+    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+    if (!allowedTypes.includes(mimeType))
+      return res.status(400).json({ success: false, error: 'Only JPG, PNG or WebP images allowed' });
+
+    if (fileBuffer.length > 5 * 1024 * 1024)
+      return res.status(400).json({ success: false, error: 'Image must be under 5MB' });
+
+    const result = await db.query(
+      `INSERT INTO property_agent_images (filename, mime_type, data, agent_name, user_email)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id`,
+      [fileName, mimeType, fileBuffer, agentName, req.user.email || '']
+    );
+
+    const imageId  = result.rows[0].id;
+    const imageUrl = `${API_BASE_URL}/28property/image/${imageId}`;
+
+    res.json({ success: true, image_id: imageId, image_url: imageUrl });
+  } catch (err) {
+    console.error('28property upload error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── SERVE AGENT PHOTO ────────────────────────────────────
+// GET /28property/image/:id  (public — no auth, so n8n can fetch it)
+app.get('/28property/image/:id', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (!id || isNaN(id))
+      return res.status(400).json({ error: 'Invalid image ID' });
+
+    const result = await db.query(
+      'SELECT data, mime_type, filename FROM property_agent_images WHERE id = $1',
+      [id]
+    );
+
+    if (result.rows.length === 0)
+      return res.status(404).json({ error: 'Image not found' });
+
+    const { data, mime_type, filename } = result.rows[0];
+    res.setHeader('Content-Type', mime_type);
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.send(data);
+  } catch (err) {
+    console.error('28property image serve error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── START VIDEO PRODUCTION ───────────────────────────────
+// POST /28property/start
+// Body: { property_url, image_id, agent_name }
+// Fires n8n webhook with all data including the public image URL
+app.post('/28property/start', authMiddleware, async (req, res) => {
+  try {
+    const { property_url, image_id, agent_name } = req.body;
+
+    if (!property_url)
+      return res.status(400).json({ success: false, error: 'property_url is required' });
+    if (!image_id)
+      return res.status(400).json({ success: false, error: 'image_id is required — upload photo first' });
+
+    const imgCheck = await db.query(
+      'SELECT id FROM property_agent_images WHERE id = $1',
+      [parseInt(image_id)]
+    );
+    if (imgCheck.rows.length === 0)
+      return res.status(400).json({ success: false, error: 'Image not found — please re-upload' });
+
+    const agent_image_url = `${API_BASE_URL}/28property/image/${image_id}`;
+
+    const payload = {
+      property_url,
+      agent_image_url,
+      agent_name:   agent_name  || '',
+      user_email:   req.user.email || '',
+      user_name:    req.user.name  || '',
+      triggered_at: new Date().toISOString()
+    };
+
+    const r = await fetch(PROPERTY_WEBHOOK, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(payload)
+    });
+
+    const text = await r.text();
+    let data;
+    try { data = JSON.parse(text); } catch { data = { raw: text }; }
+
+    res.json({ success: true, n8n: data, payload_sent: payload });
+  } catch (err) {
+    console.error('28property start error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── LIST RECENT JOBS (per user) ───────────────────────────
+// GET /28property/jobs
+app.get('/28property/jobs', authMiddleware, async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT id, filename, mime_type, agent_name, user_email, created_at
+       FROM property_agent_images
+       WHERE user_email = $1
+       ORDER BY created_at DESC
+       LIMIT 20`,
+      [req.user.email]
+    );
+    res.json({ success: true, records: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
