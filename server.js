@@ -1024,6 +1024,132 @@ app.post('/notify/topics', async (req, res) => {
   }
 });
 
+// POST /research/image-prompt — fires n8n action: image_prompt
+app.post('/research/image-prompt', authMiddleware, async (req, res) => {
+  try {
+    const { session_id, property_image_url, avatar_url, prompt } = req.body;
+    if (!session_id) return res.status(400).json({ success: false, error: 'session_id required' });
+
+    res.json({ success: true, session_id });
+
+    const payload = JSON.stringify({
+      action:               'image_prompt',
+      session_id,
+      property_image_url,
+      avatar_url,
+      prompt,
+      callback_url:         `${API_BASE_URL}/notify/result-image`,
+      user_email:           req.user.email || '',
+      triggered_at:         new Date().toISOString()
+    });
+
+    fetch(WEBHOOK, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: payload
+    })
+    .then(async r => { const t = await r.text(); console.log('image_prompt webhook:', r.status, t); })
+    .catch(err => console.error('image_prompt webhook FAILED:', err.message));
+
+  } catch (err) {
+    console.error('research/image-prompt error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /notify/regen-prompt — n8n calls this with new AI prompt
+app.post('/notify/regen-prompt', async (req, res) => {
+  try {
+    const { session_id, prompt } = req.body;
+    if (!session_id || !prompt)
+      return res.status(400).json({ success: false, error: 'session_id and prompt required' });
+
+    const payload = JSON.stringify({ type: 'regen_prompt', session_id, prompt });
+    clients.forEach(clientRes => { clientRes.write(`data: ${payload}\n\n`); });
+    res.json({ success: true, notified: clients.size });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /notify/result-image — n8n calls this with composited image URL
+app.post('/notify/result-image', async (req, res) => {
+  try {
+    const { session_id, image_url } = req.body;
+    if (!session_id || !image_url)
+      return res.status(400).json({ success: false, error: 'session_id and image_url required' });
+
+    const payload = JSON.stringify({ type: 'result_image', session_id, image_url });
+    clients.forEach(clientRes => { clientRes.write(`data: ${payload}\n\n`); });
+    res.json({ success: true, notified: clients.size });
+  } catch (err) {
+    console.error('notify/result-image error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+app.post('/compose-image', authMiddleware, async (req, res) => {
+  try {
+    const { property_image_url, avatar_image_url, avatar_x_pct = 0.03, avatar_y_pct = 0.75 } = req.body;
+    if (!property_image_url || !avatar_image_url)
+      return res.status(400).json({ success: false, error: 'Both image URLs required' });
+
+    const sharp = require('sharp');
+
+    // Fetch both images
+    const [propRes, avRes] = await Promise.all([
+      fetch(property_image_url),
+      fetch(avatar_image_url)
+    ]);
+    const propBuf = Buffer.from(await propRes.arrayBuffer());
+    const avBuf   = Buffer.from(await avRes.arrayBuffer());
+
+    // Get property image dimensions
+    const propMeta = await sharp(propBuf).metadata();
+    const W = propMeta.width;
+    const H = propMeta.height;
+
+    // Avatar size = 18% of width
+    const avSize = Math.round(W * 0.18);
+    const x      = Math.round(avatar_x_pct * W);
+    const y      = Math.round(avatar_y_pct * H);
+
+    // Circular crop avatar with white border
+    const borderW  = 4;
+    const totalSize = avSize + borderW * 2;
+    const circleMask = Buffer.from(
+      `<svg width="${avSize}" height="${avSize}"><circle cx="${avSize/2}" cy="${avSize/2}" r="${avSize/2}" fill="white"/></svg>`
+    );
+
+    // Resize + circle-clip avatar
+    const avCircle = await sharp(avBuf)
+      .resize(avSize, avSize, { fit: 'cover', position: 'top' })
+      .composite([{ input: circleMask, blend: 'dest-in' }])
+      .png()
+      .toBuffer();
+
+    // White border circle
+    const borderCircle = Buffer.from(
+      `<svg width="${totalSize}" height="${totalSize}"><circle cx="${totalSize/2}" cy="${totalSize/2}" r="${totalSize/2}" fill="white"/></svg>`
+    );
+
+    // Composite onto property image
+    const result = await sharp(propBuf)
+      .composite([
+        { input: borderCircle, left: x - borderW, top: y - borderW, blend: 'over' },
+        { input: avCircle,     left: x,            top: y,           blend: 'over' }
+      ])
+      .jpeg({ quality: 92 })
+      .toBuffer();
+
+    // Return as base64 data URL
+    const dataUrl = 'data:image/jpeg;base64,' + result.toString('base64');
+    res.json({ success: true, image_url: dataUrl });
+
+  } catch (err) {
+    console.error('compose-image error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ══════════════════════════════════════════════════════════
-const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
