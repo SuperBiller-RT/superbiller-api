@@ -813,6 +813,16 @@ app.post('/28property/start', authMiddleware, async (req, res) => {
   }
 });
 
+app.delete('/28property/avatar/:id', authMiddleware, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    await db.query('DELETE FROM property_agent_images WHERE id = $1', [id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.get('/28property/avatars', authMiddleware, async (req, res) => {
   try {
     const result = await db.query(
