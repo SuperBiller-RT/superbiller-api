@@ -48,6 +48,7 @@ const AIRTABLE_PAT      = process.env.AIRTABLE_PAT;
 const API_BASE_URL      = process.env.API_BASE_URL || 'https://superbiller-api-production.up.railway.app';
 const PROPERTY_WEBHOOK  = 'https://primary-production-ab4a6.up.railway.app/webhook/28property';
 const RESEARCH_WEBHOOK  = 'https://primary-production-ab4a6.up.railway.app/webhook/28property';
+const TOPICS_WEBHOOK    = 'https://primary-production-ab4a6.up.railway.app/webhook/topics';
 
 // ── SETUP DB ──────────────────────────────────────────────
 async function setupDB() {
@@ -965,6 +966,59 @@ app.get('/research/session/:session_id', authMiddleware, async (req, res) => {
       return res.status(404).json({ success: false, error: 'Session not found' });
     res.json({ success: true, session: result.rows[0] });
   } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /research/topics — fires n8n to generate AI topics
+app.post('/research/topics', authMiddleware, async (req, res) => {
+  try {
+    const { session_id, property } = req.body;
+    if (!session_id) return res.status(400).json({ success: false, error: 'session_id required' });
+
+    // Respond immediately
+    res.json({ success: true, session_id });
+
+    // Fire n8n topics webhook in background
+    const payload = JSON.stringify({
+      session_id,
+      property,
+      callback_url: `${API_BASE_URL}/notify/topics`,
+      user_email:   req.user.email || '',
+      triggered_at: new Date().toISOString()
+    });
+
+    fetch(TOPICS_WEBHOOK, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: payload
+    })
+    .then(async (r) => { const t = await r.text(); console.log('topics webhook:', r.status, t); })
+    .catch(err => console.error('topics webhook FAILED:', err.message));
+
+  } catch (err) {
+    console.error('research/topics error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /notify/topics — n8n calls this with generated topics
+app.post('/notify/topics', async (req, res) => {
+  try {
+    const { session_id, topics } = req.body;
+    if (!session_id || !topics || !Array.isArray(topics))
+      return res.status(400).json({ success: false, error: 'session_id and topics array required' });
+
+    const payload = JSON.stringify({
+      type: 'research_topics',
+      session_id,
+      topics
+    });
+
+    clients.forEach((clientRes) => { clientRes.write(`data: ${payload}\n\n`); });
+    res.json({ success: true, notified: clients.size });
+  } catch (err) {
+    console.error('notify/topics error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
