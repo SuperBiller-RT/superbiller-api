@@ -878,33 +878,19 @@ app.post('/research/start', authMiddleware, async (req, res) => {
 // POST /notify/research  (n8n calls this — no auth)
 app.post('/notify/research', async (req, res) => {
   try {
-    const { session_id, topics } = req.body;
-    if (!session_id || !topics || !Array.isArray(topics) || topics.length < 3)
-      return res.status(400).json({ success: false, error: 'session_id and 3 topics required' });
-
-    const [t1, t2, t3] = topics;
+    const { session_id, property } = req.body;
+    if (!session_id || !property)
+      return res.status(400).json({ success: false, error: 'session_id and property required' });
 
     await db.query(
-      `UPDATE research_sessions SET
-        status       = 'topics_ready',
-        topic1_title = $2, topic1_desc = $3,
-        topic2_title = $4, topic2_desc = $5,
-        topic3_title = $6, topic3_desc = $7
-       WHERE session_id = $1`,
-      [session_id,
-       t1.title || '', t1.description || '',
-       t2.title || '', t2.description || '',
-       t3.title || '', t3.description || '']
+      `UPDATE research_sessions SET status = 'property_ready' WHERE session_id = $1`,
+      [session_id]
     );
 
     const payload = JSON.stringify({
-      type:       'research_topics',
+      type:       'research_property',
       session_id,
-      topics: [
-        { title: t1.title, description: t1.description },
-        { title: t2.title, description: t2.description },
-        { title: t3.title, description: t3.description }
-      ]
+      property
     });
 
     clients.forEach((clientRes) => { clientRes.write(`data: ${payload}\n\n`); });
