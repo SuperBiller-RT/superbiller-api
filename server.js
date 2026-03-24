@@ -811,7 +811,27 @@ app.post('/28property/start', authMiddleware, async (req, res) => {
   }
 });
 
-app.get('/28property/jobs', authMiddleware, async (req, res) => {
+app.get('/28property/avatars', authMiddleware, async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT id, filename, agent_name, user_email, created_at
+       FROM property_agent_images
+       ORDER BY created_at DESC
+       LIMIT 50`
+    );
+    const avatars = result.rows.map(r => ({
+      id: r.id,
+      filename: r.filename,
+      agent_name: r.agent_name || '',
+      user_email: r.user_email || '',
+      created_at: r.created_at,
+      image_url: `${API_BASE_URL}/28property/image/${r.id}`
+    }));
+    res.json({ success: true, avatars });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
   try {
     const data = await atFetch(
       `/${AIRTABLE_PROPERTY}?maxRecords=50&sort[0][field]=no&sort[0][direction]=desc`
