@@ -46,7 +46,7 @@ const AIRTABLE_SCRIPT   = 'tblj00M8en7pmuwOn';
 const AIRTABLE_PROPERTY = 'tbltqZuJcIfwit1JQ';  // 28property
 const AIRTABLE_PAT      = process.env.AIRTABLE_PAT;
 const API_BASE_URL      = process.env.API_BASE_URL || 'https://superbiller-api-production.up.railway.app';
-const WEBHOOK            = 'https://primary-production-ab4a6.up.railway.app/webhook/28property';
+const WEBHOOK           = 'https://primary-production-ab4a6.up.railway.app/webhook/28property';
 
 // ── SETUP DB ──────────────────────────────────────────────
 async function setupDB() {
@@ -873,17 +873,17 @@ app.post('/research/start', authMiddleware, async (req, res) => {
     );
 
     const payload = {
-      action:       'get_details',
-      session_id:   sessionId,
-      funnel:       funnel || '',
-      image_id:     image_id || null,
-      agent_name:   agent_name || '',
-      property_url: property_url || '',
+      action:          'get_details',
+      session_id:      sessionId,
+      funnel:          funnel || '',
+      image_id:        image_id || null,
+      agent_name:      agent_name || '',
+      property_url:    property_url || '',
       agent_image_url: image_id ? `${API_BASE_URL}/28property/image/${image_id}` : '',
-      user_email:   req.user.email || '',
-      user_name:    req.user.name  || '',
-      callback_url: `${API_BASE_URL}/notify/research`,
-      triggered_at: new Date().toISOString()
+      user_email:      req.user.email || '',
+      user_name:       req.user.name  || '',
+      callback_url:    `${API_BASE_URL}/notify/research`,
+      triggered_at:    new Date().toISOString()
     };
 
     const webhookPayload = JSON.stringify(payload);
@@ -1024,23 +1024,35 @@ app.post('/notify/topics', async (req, res) => {
   }
 });
 
-// POST /research/image-prompt — fires n8n action: image_prompt
+// POST /research/image-prompt — fires n8n with correct action
+// FIX: action_type ('add_avatar' | 'regen_prompt') is now read from the request
+//      and forwarded to n8n, with callback_url routed accordingly.
 app.post('/research/image-prompt', authMiddleware, async (req, res) => {
   try {
-    const { session_id, property_image_url, avatar_url, prompt } = req.body;
+    const { session_id, property_image_url, avatar_url, prompt, action_type } = req.body;
     if (!session_id) return res.status(400).json({ success: false, error: 'session_id required' });
 
-    res.json({ success: true, session_id });
+    // Whitelist valid actions — default to add_avatar if unknown value arrives
+    const ALLOWED_ACTIONS = ['add_avatar', 'regen_prompt'];
+    const action = ALLOWED_ACTIONS.includes(action_type) ? action_type : 'add_avatar';
+
+    // Route callback to the correct notify endpoint so SSE fires the right event type
+    const callback_url = action === 'regen_prompt'
+      ? `${API_BASE_URL}/notify/regen-prompt`
+      : `${API_BASE_URL}/notify/result-image`;
+
+    // Respond immediately — don't wait for n8n
+    res.json({ success: true, session_id, action });
 
     const payload = JSON.stringify({
-      action:               'image_prompt',
+      action,
       session_id,
       property_image_url,
       avatar_url,
       prompt,
-      callback_url:         `${API_BASE_URL}/notify/result-image`,
-      user_email:           req.user.email || '',
-      triggered_at:         new Date().toISOString()
+      callback_url,
+      user_email:   req.user.email || '',
+      triggered_at: new Date().toISOString()
     });
 
     fetch(WEBHOOK, {
@@ -1048,8 +1060,8 @@ app.post('/research/image-prompt', authMiddleware, async (req, res) => {
       headers: { 'Content-Type': 'application/json' },
       body: payload
     })
-    .then(async r => { const t = await r.text(); console.log('image_prompt webhook:', r.status, t); })
-    .catch(err => console.error('image_prompt webhook FAILED:', err.message));
+    .then(async r => { const t = await r.text(); console.log(`${action} webhook:`, r.status, t); })
+    .catch(err => console.error(`${action} webhook FAILED:`, err.message));
 
   } catch (err) {
     console.error('research/image-prompt error:', err.message);
@@ -1087,6 +1099,7 @@ app.post('/notify/result-image', async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
 app.post('/compose-image', authMiddleware, async (req, res) => {
   try {
     const { property_image_url, avatar_image_url, avatar_x_pct = 0.03, avatar_y_pct = 0.75 } = req.body;
@@ -1114,7 +1127,7 @@ app.post('/compose-image', authMiddleware, async (req, res) => {
     const y      = Math.round(avatar_y_pct * H);
 
     // Circular crop avatar with white border
-    const borderW  = 4;
+    const borderW   = 4;
     const totalSize = avSize + borderW * 2;
     const circleMask = Buffer.from(
       `<svg width="${avSize}" height="${avSize}"><circle cx="${avSize/2}" cy="${avSize/2}" r="${avSize/2}" fill="white"/></svg>`
