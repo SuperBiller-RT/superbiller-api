@@ -829,7 +829,7 @@ app.get('/28property/jobs', authMiddleware, async (req, res) => {
 // POST /research/start
 app.post('/research/start', authMiddleware, async (req, res) => {
   try {
-    const { funnel, image_id, agent_name } = req.body;
+    const { funnel, image_id, agent_name, property_url } = req.body;
     const sessionId = require('crypto').randomBytes(24).toString('hex');
 
     await db.query(
@@ -843,17 +843,30 @@ app.post('/research/start', authMiddleware, async (req, res) => {
       funnel:       funnel || '',
       image_id:     image_id || null,
       agent_name:   agent_name || '',
+      property_url: property_url || '',
+      agent_image_url: image_id ? `${API_BASE_URL}/28property/image/${image_id}` : '',
       user_email:   req.user.email || '',
       user_name:    req.user.name  || '',
       callback_url: `${API_BASE_URL}/notify/research`,
       triggered_at: new Date().toISOString()
     };
 
-    fetch(RESEARCH_WEBHOOK, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    }).catch(err => console.error('n8n research webhook error:', err.message));
+    const webhookPayload = JSON.stringify(payload);
+    console.log('Firing research webhook to:', RESEARCH_WEBHOOK);
+    console.log('Payload:', webhookPayload);
+
+    try {
+      const webhookRes = await fetch(RESEARCH_WEBHOOK, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: webhookPayload
+      });
+      const webhookText = await webhookRes.text();
+      console.log('n8n research webhook response status:', webhookRes.status);
+      console.log('n8n research webhook response body:', webhookText);
+    } catch (webhookErr) {
+      console.error('n8n research webhook FAILED:', webhookErr.message);
+    }
 
     res.json({ success: true, session_id: sessionId });
   } catch (err) {
