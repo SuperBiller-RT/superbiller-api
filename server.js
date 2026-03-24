@@ -46,9 +46,7 @@ const AIRTABLE_SCRIPT   = 'tblj00M8en7pmuwOn';
 const AIRTABLE_PROPERTY = 'tbltqZuJcIfwit1JQ';  // 28property
 const AIRTABLE_PAT      = process.env.AIRTABLE_PAT;
 const API_BASE_URL      = process.env.API_BASE_URL || 'https://superbiller-api-production.up.railway.app';
-const PROPERTY_WEBHOOK  = 'https://primary-production-ab4a6.up.railway.app/webhook/28property';
-const RESEARCH_WEBHOOK  = 'https://primary-production-ab4a6.up.railway.app/webhook/28property';
-const TOPICS_WEBHOOK    = 'https://primary-production-ab4a6.up.railway.app/webhook/topics';
+const WEBHOOK            = 'https://primary-production-ab4a6.up.railway.app/webhook/superbiller';
 
 // ── SETUP DB ──────────────────────────────────────────────
 async function setupDB() {
@@ -791,6 +789,7 @@ app.post('/28property/start', authMiddleware, async (req, res) => {
 
     const agent_image_url = `${API_BASE_URL}/28property/image/${image_id}`;
     const payload = {
+      action:       'get_details',
       property_url,
       agent_image_url,
       agent_name:   agent_name || '',
@@ -799,7 +798,7 @@ app.post('/28property/start', authMiddleware, async (req, res) => {
       triggered_at: new Date().toISOString()
     };
 
-    const r = await fetch(PROPERTY_WEBHOOK, {
+    const r = await fetch(WEBHOOK, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -874,6 +873,7 @@ app.post('/research/start', authMiddleware, async (req, res) => {
     );
 
     const payload = {
+      action:       'get_details',
       session_id:   sessionId,
       funnel:       funnel || '',
       image_id:     image_id || null,
@@ -887,13 +887,13 @@ app.post('/research/start', authMiddleware, async (req, res) => {
     };
 
     const webhookPayload = JSON.stringify(payload);
-    console.log('Firing research webhook to:', RESEARCH_WEBHOOK);
+    console.log('Firing webhook:', WEBHOOK);
 
     // Respond immediately — don't wait for n8n
     res.json({ success: true, session_id: sessionId });
 
     // Fire webhook in background
-    fetch(RESEARCH_WEBHOOK, {
+    fetch(WEBHOOK, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: webhookPayload
@@ -981,6 +981,7 @@ app.post('/research/topics', authMiddleware, async (req, res) => {
 
     // Fire n8n topics webhook in background
     const payload = JSON.stringify({
+      action:       'get_topics',
       session_id,
       property,
       callback_url: `${API_BASE_URL}/notify/topics`,
@@ -988,7 +989,7 @@ app.post('/research/topics', authMiddleware, async (req, res) => {
       triggered_at: new Date().toISOString()
     });
 
-    fetch(TOPICS_WEBHOOK, {
+    fetch(WEBHOOK, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: payload
