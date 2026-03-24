@@ -37,20 +37,20 @@ const db = new Pool({
 });
 
 // ── CONFIG ────────────────────────────────────────────────
-const JWT_SECRET         = process.env.JWT_SECRET || 'superbiller-secret-change-me';
-const N8N_WEBHOOK        = process.env.N8N_WEBHOOK_URL;
-const AIRTABLE_BASE      = 'appwGBvGSWNq8BLfh';
-const AIRTABLE_TABLE     = 'tbliHRJwRfrQckb55';  // n8n_video
-const AIRTABLE_SCENES    = 'tblbtxQHxqllsMrSd';  // video_production
-const AIRTABLE_SCRIPT    = 'tblj00M8en7pmuwOn';
-const AIRTABLE_PROPERTY  = 'tbltqZuJcIfwit1JQ';  // 28property
-const AIRTABLE_PAT       = process.env.AIRTABLE_PAT;
-const API_BASE_URL       = process.env.API_BASE_URL || 'https://superbiller-api-production.up.railway.app';
-const PROPERTY_WEBHOOK   = 'https://primary-production-ab4a6.up.railway.app/webhook/28property';
+const JWT_SECRET        = process.env.JWT_SECRET || 'superbiller-secret-change-me';
+const N8N_WEBHOOK       = process.env.N8N_WEBHOOK_URL;
+const AIRTABLE_BASE     = 'appwGBvGSWNq8BLfh';
+const AIRTABLE_TABLE    = 'tbliHRJwRfrQckb55';  // n8n_video
+const AIRTABLE_SCENES   = 'tblbtxQHxqllsMrSd';  // video_production
+const AIRTABLE_SCRIPT   = 'tblj00M8en7pmuwOn';
+const AIRTABLE_PROPERTY = 'tbltqZuJcIfwit1JQ';  // 28property
+const AIRTABLE_PAT      = process.env.AIRTABLE_PAT;
+const API_BASE_URL      = process.env.API_BASE_URL || 'https://superbiller-api-production.up.railway.app';
+const PROPERTY_WEBHOOK  = 'https://primary-production-ab4a6.up.railway.app/webhook/28property';
+const RESEARCH_WEBHOOK  = 'https://primary-production-ab4a6.up.railway.app/webhook-test/28property';
 
 // ── SETUP DB ──────────────────────────────────────────────
 async function setupDB() {
-  // Users table
   await db.query(`
     CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
@@ -62,7 +62,6 @@ async function setupDB() {
     )
   `);
 
-  // 28Property agent images
   await db.query(`
     CREATE TABLE IF NOT EXISTS property_agent_images (
       id SERIAL PRIMARY KEY,
@@ -71,6 +70,25 @@ async function setupDB() {
       data BYTEA NOT NULL,
       agent_name VARCHAR(200),
       user_email VARCHAR(200),
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS research_sessions (
+      id SERIAL PRIMARY KEY,
+      session_id VARCHAR(64) UNIQUE NOT NULL,
+      user_email VARCHAR(200),
+      funnel VARCHAR(50),
+      image_id INTEGER,
+      status VARCHAR(20) DEFAULT 'pending',
+      topic1_title TEXT,
+      topic1_desc TEXT,
+      topic2_title TEXT,
+      topic2_desc TEXT,
+      topic3_title TEXT,
+      topic3_desc TEXT,
+      chosen_topic TEXT,
       created_at TIMESTAMP DEFAULT NOW()
     )
   `);
@@ -274,7 +292,7 @@ app.get('/events', (req, res) => {
   });
 });
 
-// ── NOTIFY — called by N8N when scene status changes ─────
+// ── NOTIFY SCENE — called by n8n when scene status changes ─
 app.post('/notify/scene', async (req, res) => {
   try {
     const { record_id, status, task } = req.body;
@@ -673,8 +691,6 @@ app.post('/db/query', authMiddleware, async (req, res) => {
 // 28PROPERTY ROUTES
 // ══════════════════════════════════════════════════════════
 
-// ── UPLOAD AGENT PHOTO ────────────────────────────────────
-// POST /28property/upload  (multipart: file, agent_name?)
 app.post('/28property/upload', authMiddleware, async (req, res) => {
   try {
     const body = req.rawBody;
@@ -686,10 +702,7 @@ app.post('/28property/upload', authMiddleware, async (req, res) => {
     const boundary = boundaryMatch[1].trim();
 
     const parts = body.toString('binary').split('--' + boundary);
-    let fileBuffer = null;
-    let fileName    = 'agent-photo';
-    let mimeType    = 'image/jpeg';
-    let agentName   = '';
+    let fileBuffer = null, fileName = 'agent-photo', mimeType = 'image/jpeg', agentName = '';
 
     for (const part of parts) {
       if (!part.includes('Content-Disposition')) continue;
@@ -701,9 +714,8 @@ app.post('/28property/upload', authMiddleware, async (req, res) => {
       if (headerEnd === -1) continue;
       const value = part.slice(headerEnd + 4, part.lastIndexOf('\r\n'));
 
-      if (name === 'agent_name') {
-        agentName = value.trim();
-      } else if (filenameMatch) {
+      if (name === 'agent_name') { agentName = value.trim(); }
+      else if (filenameMatch) {
         fileName   = filenameMatch[1];
         mimeType   = ctMatch ? ctMatch[1].trim() : 'image/jpeg';
         fileBuffer = Buffer.from(value, 'binary');
@@ -722,14 +734,12 @@ app.post('/28property/upload', authMiddleware, async (req, res) => {
 
     const result = await db.query(
       `INSERT INTO property_agent_images (filename, mime_type, data, agent_name, user_email)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING id`,
+       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
       [fileName, mimeType, fileBuffer, agentName, req.user.email || '']
     );
 
     const imageId  = result.rows[0].id;
     const imageUrl = `${API_BASE_URL}/28property/image/${imageId}`;
-
     res.json({ success: true, image_id: imageId, image_url: imageUrl });
   } catch (err) {
     console.error('28property upload error:', err.message);
@@ -737,8 +747,6 @@ app.post('/28property/upload', authMiddleware, async (req, res) => {
   }
 });
 
-// ── SERVE AGENT PHOTO ─────────────────────────────────────
-// GET /28property/image/:id  (public — no auth so n8n can fetch)
 app.get('/28property/image/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
@@ -746,8 +754,7 @@ app.get('/28property/image/:id', async (req, res) => {
       return res.status(400).json({ error: 'Invalid image ID' });
 
     const result = await db.query(
-      'SELECT data, mime_type, filename FROM property_agent_images WHERE id = $1',
-      [id]
+      'SELECT data, mime_type, filename FROM property_agent_images WHERE id = $1', [id]
     );
 
     if (result.rows.length === 0)
@@ -764,10 +771,6 @@ app.get('/28property/image/:id', async (req, res) => {
   }
 });
 
-// ── START VIDEO PRODUCTION ────────────────────────────────
-// POST /28property/start
-// Body: { property_url, image_id, agent_name }
-// Fires n8n webhook — n8n then creates the Airtable row itself
 app.post('/28property/start', authMiddleware, async (req, res) => {
   try {
     const { property_url, image_id, agent_name } = req.body;
@@ -778,33 +781,29 @@ app.post('/28property/start', authMiddleware, async (req, res) => {
       return res.status(400).json({ success: false, error: 'image_id is required — upload photo first' });
 
     const imgCheck = await db.query(
-      'SELECT id FROM property_agent_images WHERE id = $1',
-      [parseInt(image_id)]
+      'SELECT id FROM property_agent_images WHERE id = $1', [parseInt(image_id)]
     );
     if (imgCheck.rows.length === 0)
       return res.status(400).json({ success: false, error: 'Image not found — please re-upload' });
 
     const agent_image_url = `${API_BASE_URL}/28property/image/${image_id}`;
-
     const payload = {
       property_url,
       agent_image_url,
-      agent_name:   agent_name  || '',
+      agent_name:   agent_name || '',
       user_email:   req.user.email || '',
       user_name:    req.user.name  || '',
       triggered_at: new Date().toISOString()
     };
 
     const r = await fetch(PROPERTY_WEBHOOK, {
-      method:  'POST',
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify(payload)
+      body: JSON.stringify(payload)
     });
 
     const text = await r.text();
-    let data;
-    try { data = JSON.parse(text); } catch { data = { raw: text }; }
-
+    let data; try { data = JSON.parse(text); } catch { data = { raw: text }; }
     res.json({ success: true, n8n: data });
   } catch (err) {
     console.error('28property start error:', err.message);
@@ -812,15 +811,127 @@ app.post('/28property/start', authMiddleware, async (req, res) => {
   }
 });
 
-// ── LIST 28PROPERTY JOBS from Airtable ────────────────────
-// GET /28property/jobs
-// Polls the tbltqZuJcIfwit1JQ table, sorted newest first
 app.get('/28property/jobs', authMiddleware, async (req, res) => {
   try {
     const data = await atFetch(
       `/${AIRTABLE_PROPERTY}?maxRecords=50&sort[0][field]=no&sort[0][direction]=desc`
     );
     res.json({ success: true, records: data.records || [] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════
+// RESEARCH ROUTES
+// ══════════════════════════════════════════════════════════
+
+// POST /research/start
+app.post('/research/start', authMiddleware, async (req, res) => {
+  try {
+    const { funnel, image_id, agent_name } = req.body;
+    const sessionId = require('crypto').randomBytes(24).toString('hex');
+
+    await db.query(
+      `INSERT INTO research_sessions (session_id, user_email, funnel, image_id, status)
+       VALUES ($1, $2, $3, $4, 'pending')`,
+      [sessionId, req.user.email || '', funnel || '', image_id || null]
+    );
+
+    const payload = {
+      session_id:   sessionId,
+      funnel:       funnel || '',
+      image_id:     image_id || null,
+      agent_name:   agent_name || '',
+      user_email:   req.user.email || '',
+      user_name:    req.user.name  || '',
+      callback_url: `${API_BASE_URL}/notify/research`,
+      triggered_at: new Date().toISOString()
+    };
+
+    fetch(RESEARCH_WEBHOOK, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).catch(err => console.error('n8n research webhook error:', err.message));
+
+    res.json({ success: true, session_id: sessionId });
+  } catch (err) {
+    console.error('research/start error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /notify/research  (n8n calls this — no auth)
+app.post('/notify/research', async (req, res) => {
+  try {
+    const { session_id, topics } = req.body;
+    if (!session_id || !topics || !Array.isArray(topics) || topics.length < 3)
+      return res.status(400).json({ success: false, error: 'session_id and 3 topics required' });
+
+    const [t1, t2, t3] = topics;
+
+    await db.query(
+      `UPDATE research_sessions SET
+        status       = 'topics_ready',
+        topic1_title = $2, topic1_desc = $3,
+        topic2_title = $4, topic2_desc = $5,
+        topic3_title = $6, topic3_desc = $7
+       WHERE session_id = $1`,
+      [session_id,
+       t1.title || '', t1.description || '',
+       t2.title || '', t2.description || '',
+       t3.title || '', t3.description || '']
+    );
+
+    const payload = JSON.stringify({
+      type:       'research_topics',
+      session_id,
+      topics: [
+        { title: t1.title, description: t1.description },
+        { title: t2.title, description: t2.description },
+        { title: t3.title, description: t3.description }
+      ]
+    });
+
+    clients.forEach((clientRes) => { clientRes.write(`data: ${payload}\n\n`); });
+    res.json({ success: true, notified: clients.size });
+  } catch (err) {
+    console.error('notify/research error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /research/select
+app.post('/research/select', authMiddleware, async (req, res) => {
+  try {
+    const { session_id, chosen_topic, chosen_index } = req.body;
+    if (!session_id || !chosen_topic)
+      return res.status(400).json({ success: false, error: 'session_id and chosen_topic required' });
+
+    await db.query(
+      `UPDATE research_sessions SET status = 'topic_selected', chosen_topic = $2
+       WHERE session_id = $1`,
+      [session_id, chosen_topic]
+    );
+
+    res.json({ success: true, session_id, chosen_topic });
+  } catch (err) {
+    console.error('research/select error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /research/session/:session_id
+app.get('/research/session/:session_id', authMiddleware, async (req, res) => {
+  try {
+    const result = await db.query(
+      'SELECT * FROM research_sessions WHERE session_id = $1',
+      [req.params.session_id]
+    );
+    if (result.rows.length === 0)
+      return res.status(404).json({ success: false, error: 'Session not found' });
+    res.json({ success: true, session: result.rows[0] });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
