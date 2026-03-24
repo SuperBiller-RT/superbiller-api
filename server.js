@@ -832,6 +832,8 @@ app.get('/28property/avatars', authMiddleware, async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+app.get('/28property/jobs', authMiddleware, async (req, res) => {
   try {
     const data = await atFetch(
       `/${AIRTABLE_PROPERTY}?maxRecords=50&sort[0][field]=no&sort[0][direction]=desc`
