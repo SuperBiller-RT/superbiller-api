@@ -763,7 +763,9 @@ app.get('/28property/image/:id', async (req, res) => {
     const { data, mime_type, filename } = result.rows[0];
     res.setHeader('Content-Type', mime_type);
     res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
-    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
+    res.setHeader('ETag', `"img-${id}"`);
+    if (req.headers['if-none-match'] === `"img-${id}"`) return res.status(304).end();
     res.send(data);
   } catch (err) {
     console.error('28property image serve error:', err.message);
