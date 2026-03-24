@@ -46,7 +46,7 @@ const AIRTABLE_SCRIPT   = 'tblj00M8en7pmuwOn';
 const AIRTABLE_PROPERTY = 'tbltqZuJcIfwit1JQ';  // 28property
 const AIRTABLE_PAT      = process.env.AIRTABLE_PAT;
 const API_BASE_URL      = process.env.API_BASE_URL || 'https://superbiller-api-production.up.railway.app';
-const WEBHOOK            = 'https://primary-production-ab4a6.up.railway.app/webhook/superbiller';
+const WEBHOOK            = 'https://primary-production-ab4a6.up.railway.app/webhook/28property';
 
 // ── SETUP DB ──────────────────────────────────────────────
 async function setupDB() {
