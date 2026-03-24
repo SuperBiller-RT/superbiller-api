@@ -853,22 +853,21 @@ app.post('/research/start', authMiddleware, async (req, res) => {
 
     const webhookPayload = JSON.stringify(payload);
     console.log('Firing research webhook to:', RESEARCH_WEBHOOK);
-    console.log('Payload:', webhookPayload);
 
-    try {
-      const webhookRes = await fetch(RESEARCH_WEBHOOK, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: webhookPayload
-      });
-      const webhookText = await webhookRes.text();
-      console.log('n8n research webhook response status:', webhookRes.status);
-      console.log('n8n research webhook response body:', webhookText);
-    } catch (webhookErr) {
-      console.error('n8n research webhook FAILED:', webhookErr.message);
-    }
-
+    // Respond immediately — don't wait for n8n
     res.json({ success: true, session_id: sessionId });
+
+    // Fire webhook in background
+    fetch(RESEARCH_WEBHOOK, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: webhookPayload
+    })
+    .then(async (webhookRes) => {
+      const text = await webhookRes.text();
+      console.log('n8n research webhook status:', webhookRes.status, text);
+    })
+    .catch(err => console.error('n8n research webhook FAILED:', err.message));
   } catch (err) {
     console.error('research/start error:', err.message);
     res.status(500).json({ success: false, error: err.message });
