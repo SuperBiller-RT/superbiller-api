@@ -841,6 +841,23 @@ app.post('/28property/start', authMiddleware, async (req, res) => {
   }
 });
 
+// Update agent name on an existing avatar record
+app.patch('/28property/avatar/:id/name', authMiddleware, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const { agent_name } = req.body;
+    if (!agent_name || !agent_name.trim())
+      return res.status(400).json({ success: false, error: 'agent_name required' });
+    await db.query(
+      'UPDATE property_agent_images SET agent_name = $1 WHERE id = $2',
+      [agent_name.trim(), id]
+    );
+    res.json({ success: true, id, agent_name: agent_name.trim() });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.delete('/28property/avatar/:id', authMiddleware, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
