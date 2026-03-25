@@ -319,16 +319,19 @@ app.get('/airtable/scenes/single', authMiddleware, async (req, res) => {
       return res.status(500).json({ success: false, error: data.error });
     }
     const f = data.fields || {};
+    // ── FIX 2: added full_script_EN and full_script_TH ──
     res.json({
       success: true,
       fields: {
-        status: f.status || null,
-        image: f.image || null,
-        audio_EN: f.audio_EN || null,
-        audio_TH: f.audio_TH || null,
-        video_EN: f.video_EN || null,
-        full_audio_EN: f.full_audio_EN || null,
-        full_audio_TH: f.full_audio_TH || null,
+        status:         f.status         || null,
+        image:          f.image          || null,
+        audio_EN:       f.audio_EN       || null,
+        audio_TH:       f.audio_TH       || null,
+        video_EN:       f.video_EN       || null,
+        full_audio_EN:  f.full_audio_EN  || null,
+        full_audio_TH:  f.full_audio_TH  || null,
+        full_script_EN: f.full_script_EN || null,
+        full_script_TH: f.full_script_TH || null,
       }
     });
   } catch (err) {
@@ -343,13 +346,16 @@ app.get('/airtable/scenes', authMiddleware, async (req, res) => {
     if (!jobRecordId)
       return res.status(400).json({ success: false, error: 'job_record_id query param required' });
 
+    // ── FIX 1: added full_script_EN, full_script_TH, voice_id ──
     const fields = [
       'no', 'scene_number', 'scene_type', 'pacing',
       'estimated_duration_secs', 'total_scenes', 'total_duration',
       'voiceover_sync_EN', 'voiceover_sync_TH',
+      'full_script_EN', 'full_script_TH',
       'image_prompt', 'negative_prompt',
       'Generate', 'image', 'status', 'task',
-      'audio_EN', 'audio_TH', 'video_EN', 'full_audio_EN', 'full_audio_TH'
+      'audio_EN', 'audio_TH', 'video_EN', 'full_audio_EN', 'full_audio_TH',
+      'voice_id'
     ];
     const fieldParams = fields.map(f => `fields[]=${encodeURIComponent(f)}`).join('&');
     const filter = encodeURIComponent(`{job_id}="${jobRecordId}"`);
@@ -382,6 +388,7 @@ app.post('/airtable/scene/update', authMiddleware, async (req, res) => {
     const allowed = [
       'image_prompt', 'negative_prompt',
       'voiceover_sync_EN', 'voiceover_sync_TH',
+      'full_script_EN', 'full_script_TH',
       'Generate', 'status', 'task',
       'scene_number', 'scene_type', 'pacing', 'estimated_duration_secs',
       'image', 'audio_EN', 'audio_TH', 'video_EN', 'full_audio_EN', 'full_audio_TH',
@@ -412,9 +419,11 @@ app.post('/airtable/scenes/batch-update', authMiddleware, async (req, res) => {
     if (!updates || !Array.isArray(updates) || updates.length === 0)
       return res.status(400).json({ success: false, error: 'updates array required' });
 
+    // ── FIX 3: added full_script_EN and full_script_TH ──
     const allowed = [
       'scene_number', 'scene_type', 'pacing', 'estimated_duration_secs',
       'image_prompt', 'negative_prompt', 'voiceover_sync_EN', 'voiceover_sync_TH',
+      'full_script_EN', 'full_script_TH',
       'Generate', 'status', 'task',
       'avatar_name', 'voice_id'
     ];
@@ -860,7 +869,6 @@ app.get('/28property/jobs', authMiddleware, async (req, res) => {
 // RESEARCH ROUTES
 // ══════════════════════════════════════════════════════════
 
-// POST /research/start
 app.post('/research/start', authMiddleware, async (req, res) => {
   try {
     const { funnel, image_id, agent_name, property_url } = req.body;
@@ -889,10 +897,8 @@ app.post('/research/start', authMiddleware, async (req, res) => {
     const webhookPayload = JSON.stringify(payload);
     console.log('Firing webhook:', WEBHOOK);
 
-    // Respond immediately — don't wait for n8n
     res.json({ success: true, session_id: sessionId });
 
-    // Fire webhook in background
     fetch(WEBHOOK, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -909,7 +915,6 @@ app.post('/research/start', authMiddleware, async (req, res) => {
   }
 });
 
-// POST /notify/research  (n8n calls this — no auth)
 app.post('/notify/research', async (req, res) => {
   try {
     const { session_id, property } = req.body;
@@ -935,7 +940,6 @@ app.post('/notify/research', async (req, res) => {
   }
 });
 
-// POST /research/select
 app.post('/research/select', authMiddleware, async (req, res) => {
   try {
     const { session_id, chosen_topic, chosen_index } = req.body;
@@ -955,7 +959,6 @@ app.post('/research/select', authMiddleware, async (req, res) => {
   }
 });
 
-// GET /research/session/:session_id
 app.get('/research/session/:session_id', authMiddleware, async (req, res) => {
   try {
     const result = await db.query(
@@ -970,16 +973,13 @@ app.get('/research/session/:session_id', authMiddleware, async (req, res) => {
   }
 });
 
-// POST /research/topics — fires n8n to generate AI topics
 app.post('/research/topics', authMiddleware, async (req, res) => {
   try {
     const { session_id, property } = req.body;
     if (!session_id) return res.status(400).json({ success: false, error: 'session_id required' });
 
-    // Respond immediately
     res.json({ success: true, session_id });
 
-    // Fire n8n topics webhook in background
     const payload = JSON.stringify({
       action:       'get_topics',
       session_id,
@@ -1003,7 +1003,6 @@ app.post('/research/topics', authMiddleware, async (req, res) => {
   }
 });
 
-// POST /notify/topics — n8n calls this with generated topics
 app.post('/notify/topics', async (req, res) => {
   try {
     const { session_id, topics } = req.body;
@@ -1024,24 +1023,18 @@ app.post('/notify/topics', async (req, res) => {
   }
 });
 
-// POST /research/image-prompt — fires n8n with correct action
-// FIX: action_type ('add_avatar' | 'regen_prompt') is now read from the request
-//      and forwarded to n8n, with callback_url routed accordingly.
 app.post('/research/image-prompt', authMiddleware, async (req, res) => {
   try {
     const { session_id, property_image_url, avatar_url, prompt, action_type } = req.body;
     if (!session_id) return res.status(400).json({ success: false, error: 'session_id required' });
 
-    // Whitelist valid actions — default to add_avatar if unknown value arrives
     const ALLOWED_ACTIONS = ['add_avatar', 'regen_prompt'];
     const action = ALLOWED_ACTIONS.includes(action_type) ? action_type : 'add_avatar';
 
-    // Route callback to the correct notify endpoint so SSE fires the right event type
     const callback_url = action === 'regen_prompt'
       ? `${API_BASE_URL}/notify/regen-prompt`
       : `${API_BASE_URL}/notify/result-image`;
 
-    // Respond immediately — don't wait for n8n
     res.json({ success: true, session_id, action });
 
     const payload = JSON.stringify({
@@ -1069,7 +1062,6 @@ app.post('/research/image-prompt', authMiddleware, async (req, res) => {
   }
 });
 
-// POST /notify/regen-prompt — n8n calls this with new AI prompt
 app.post('/notify/regen-prompt', async (req, res) => {
   try {
     const { session_id, prompt } = req.body;
@@ -1084,7 +1076,6 @@ app.post('/notify/regen-prompt', async (req, res) => {
   }
 });
 
-// POST /notify/result-image — n8n calls this with composited image URL
 app.post('/notify/result-image', async (req, res) => {
   try {
     const { session_id, image_url } = req.body;
@@ -1108,7 +1099,6 @@ app.post('/compose-image', authMiddleware, async (req, res) => {
 
     const sharp = require('sharp');
 
-    // Fetch both images
     const [propRes, avRes] = await Promise.all([
       fetch(property_image_url),
       fetch(avatar_image_url)
@@ -1116,36 +1106,30 @@ app.post('/compose-image', authMiddleware, async (req, res) => {
     const propBuf = Buffer.from(await propRes.arrayBuffer());
     const avBuf   = Buffer.from(await avRes.arrayBuffer());
 
-    // Get property image dimensions
     const propMeta = await sharp(propBuf).metadata();
     const W = propMeta.width;
     const H = propMeta.height;
 
-    // Avatar size = 18% of width
     const avSize = Math.round(W * 0.18);
     const x      = Math.round(avatar_x_pct * W);
     const y      = Math.round(avatar_y_pct * H);
 
-    // Circular crop avatar with white border
     const borderW   = 4;
     const totalSize = avSize + borderW * 2;
     const circleMask = Buffer.from(
       `<svg width="${avSize}" height="${avSize}"><circle cx="${avSize/2}" cy="${avSize/2}" r="${avSize/2}" fill="white"/></svg>`
     );
 
-    // Resize + circle-clip avatar
     const avCircle = await sharp(avBuf)
       .resize(avSize, avSize, { fit: 'cover', position: 'top' })
       .composite([{ input: circleMask, blend: 'dest-in' }])
       .png()
       .toBuffer();
 
-    // White border circle
     const borderCircle = Buffer.from(
       `<svg width="${totalSize}" height="${totalSize}"><circle cx="${totalSize/2}" cy="${totalSize/2}" r="${totalSize/2}" fill="white"/></svg>`
     );
 
-    // Composite onto property image
     const result = await sharp(propBuf)
       .composite([
         { input: borderCircle, left: x - borderW, top: y - borderW, blend: 'over' },
@@ -1154,7 +1138,6 @@ app.post('/compose-image', authMiddleware, async (req, res) => {
       .jpeg({ quality: 92 })
       .toBuffer();
 
-    // Return as base64 data URL
     const dataUrl = 'data:image/jpeg;base64,' + result.toString('base64');
     res.json({ success: true, image_url: dataUrl });
 
