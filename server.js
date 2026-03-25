@@ -73,6 +73,8 @@ async function setupDB() {
     )
   `);
 
+  // FIX 2: Added property_data and topics_data JSONB columns
+  // These store the full payload so the frontend can recover missed SSE events
   await db.query(`
     CREATE TABLE IF NOT EXISTS research_sessions (
       id SERIAL PRIMARY KEY,
@@ -88,9 +90,14 @@ async function setupDB() {
       topic3_title TEXT,
       topic3_desc TEXT,
       chosen_topic TEXT,
+      property_data JSONB,
+      topics_data JSONB,
       created_at TIMESTAMP DEFAULT NOW()
     )
   `);
+  // Non-destructive migration for existing tables
+  await db.query(`ALTER TABLE research_sessions ADD COLUMN IF NOT EXISTS property_data JSONB`).catch(() => {});
+  await db.query(`ALTER TABLE research_sessions ADD COLUMN IF NOT EXISTS topics_data JSONB`).catch(() => {});
 
   console.log('DB ready');
 }
@@ -120,6 +127,13 @@ async function atFetch(path, opts = {}) {
     }
   });
   return r.json();
+}
+
+// ── SSE HELPER — flushes after write (fixes Railway nginx buffering) ──────
+// FIX 1: Always call res.flush() after writing to SSE stream
+function sseWrite(clientRes, payload) {
+  clientRes.write(`data: ${payload}\n\n`);
+  if (clientRes.flush) clientRes.flush();
 }
 
 // ── HEALTH ────────────────────────────────────────────────
@@ -279,12 +293,19 @@ app.get('/events', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
+  // FIX 1: Disable nginx buffering explicitly
+  res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders();
 
   const userId = user.id;
   clients.set(userId, res);
 
-  const ping = setInterval(() => res.write(':\n\n'), 30000);
+  // FIX 1: flush the ping so Railway proxy doesn't buffer it
+  const ping = setInterval(() => {
+    res.write(':\n\n');
+    if (res.flush) res.flush();
+  }, 25000);
+
   req.on('close', () => {
     clearInterval(ping);
     clients.delete(userId);
@@ -298,7 +319,8 @@ app.post('/notify/scene', async (req, res) => {
     if (!record_id || !status)
       return res.status(400).json({ success: false, error: 'record_id and status required' });
     const payload = JSON.stringify({ record_id, status, task: task || '' });
-    clients.forEach((clientRes) => { clientRes.write(`data: ${payload}\n\n`); });
+    // FIX 1: use sseWrite helper which calls flush()
+    clients.forEach((clientRes) => sseWrite(clientRes, payload));
     res.json({ success: true, notified: clients.size });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -319,7 +341,6 @@ app.get('/airtable/scenes/single', authMiddleware, async (req, res) => {
       return res.status(500).json({ success: false, error: data.error });
     }
     const f = data.fields || {};
-    // ── FIX 2: added full_script_EN and full_script_TH ──
     res.json({
       success: true,
       fields: {
@@ -346,7 +367,6 @@ app.get('/airtable/scenes', authMiddleware, async (req, res) => {
     if (!jobRecordId)
       return res.status(400).json({ success: false, error: 'job_record_id query param required' });
 
-    // ── FIX 1: added full_script_EN, full_script_TH, voice_id ──
     const fields = [
       'no', 'scene_number', 'scene_type', 'pacing',
       'estimated_duration_secs', 'total_scenes', 'total_duration',
@@ -419,7 +439,6 @@ app.post('/airtable/scenes/batch-update', authMiddleware, async (req, res) => {
     if (!updates || !Array.isArray(updates) || updates.length === 0)
       return res.status(400).json({ success: false, error: 'updates array required' });
 
-    // ── FIX 3: added full_script_EN and full_script_TH ──
     const allowed = [
       'scene_number', 'scene_type', 'pacing', 'estimated_duration_secs',
       'image_prompt', 'negative_prompt', 'voiceover_sync_EN', 'voiceover_sync_TH',
@@ -915,15 +934,17 @@ app.post('/research/start', authMiddleware, async (req, res) => {
   }
 });
 
+// FIX 2: Store property_data in DB so frontend can recover missed SSE events
 app.post('/notify/research', async (req, res) => {
   try {
     const { session_id, property } = req.body;
     if (!session_id || !property)
       return res.status(400).json({ success: false, error: 'session_id and property required' });
 
+    // Store property JSON in DB for session recovery
     await db.query(
-      `UPDATE research_sessions SET status = 'property_ready' WHERE session_id = $1`,
-      [session_id]
+      `UPDATE research_sessions SET status = 'property_ready', property_data = $2 WHERE session_id = $1`,
+      [session_id, JSON.stringify(property)]
     );
 
     const payload = JSON.stringify({
@@ -932,7 +953,8 @@ app.post('/notify/research', async (req, res) => {
       property
     });
 
-    clients.forEach((clientRes) => { clientRes.write(`data: ${payload}\n\n`); });
+    // FIX 1: use sseWrite which calls flush()
+    clients.forEach((clientRes) => sseWrite(clientRes, payload));
     res.json({ success: true, notified: clients.size });
   } catch (err) {
     console.error('notify/research error:', err.message);
@@ -959,6 +981,7 @@ app.post('/research/select', authMiddleware, async (req, res) => {
   }
 });
 
+// FIX 3: Enhanced session endpoint returns parsed property + topics for frontend recovery
 app.get('/research/session/:session_id', authMiddleware, async (req, res) => {
   try {
     const result = await db.query(
@@ -967,7 +990,22 @@ app.get('/research/session/:session_id', authMiddleware, async (req, res) => {
     );
     if (result.rows.length === 0)
       return res.status(404).json({ success: false, error: 'Session not found' });
-    res.json({ success: true, session: result.rows[0] });
+
+    const row = result.rows[0];
+
+    // Parse JSONB fields — Postgres driver may return them already parsed or as strings
+    const parseJsonField = (val) => {
+      if (!val) return null;
+      if (typeof val === 'object') return val;
+      try { return JSON.parse(val); } catch { return null; }
+    };
+
+    res.json({
+      success:  true,
+      session:  row,
+      property: parseJsonField(row.property_data),
+      topics:   parseJsonField(row.topics_data),
+    });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -1003,11 +1041,18 @@ app.post('/research/topics', authMiddleware, async (req, res) => {
   }
 });
 
+// FIX 2: Store topics_data in DB so frontend can recover missed SSE events
 app.post('/notify/topics', async (req, res) => {
   try {
     const { session_id, topics } = req.body;
     if (!session_id || !topics || !Array.isArray(topics))
       return res.status(400).json({ success: false, error: 'session_id and topics array required' });
+
+    // Store topics in DB for session recovery
+    await db.query(
+      `UPDATE research_sessions SET status = 'topics_ready', topics_data = $2 WHERE session_id = $1`,
+      [session_id, JSON.stringify(topics)]
+    ).catch(err => console.error('topics_data store error:', err.message));
 
     const payload = JSON.stringify({
       type: 'research_topics',
@@ -1015,7 +1060,8 @@ app.post('/notify/topics', async (req, res) => {
       topics
     });
 
-    clients.forEach((clientRes) => { clientRes.write(`data: ${payload}\n\n`); });
+    // FIX 1: use sseWrite which calls flush()
+    clients.forEach((clientRes) => sseWrite(clientRes, payload));
     res.json({ success: true, notified: clients.size });
   } catch (err) {
     console.error('notify/topics error:', err.message);
@@ -1069,7 +1115,8 @@ app.post('/notify/regen-prompt', async (req, res) => {
       return res.status(400).json({ success: false, error: 'session_id and prompt required' });
 
     const payload = JSON.stringify({ type: 'regen_prompt', session_id, prompt });
-    clients.forEach(clientRes => { clientRes.write(`data: ${payload}\n\n`); });
+    // FIX 1: use sseWrite which calls flush()
+    clients.forEach(clientRes => sseWrite(clientRes, payload));
     res.json({ success: true, notified: clients.size });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -1083,7 +1130,8 @@ app.post('/notify/result-image', async (req, res) => {
       return res.status(400).json({ success: false, error: 'session_id and image_url required' });
 
     const payload = JSON.stringify({ type: 'result_image', session_id, image_url });
-    clients.forEach(clientRes => { clientRes.write(`data: ${payload}\n\n`); });
+    // FIX 1: use sseWrite which calls flush()
+    clients.forEach(clientRes => sseWrite(clientRes, payload));
     res.json({ success: true, notified: clients.size });
   } catch (err) {
     console.error('notify/result-image error:', err.message);
