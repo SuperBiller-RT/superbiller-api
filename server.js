@@ -1069,6 +1069,39 @@ app.post('/notify/topics', async (req, res) => {
   }
 });
 
+// ── AVATAR PROMPT — fires n8n webhook to analyse avatar + generate agent intro ──
+app.post('/research/avatar-prompt', authMiddleware, async (req, res) => {
+  try {
+    const { avatar_url, agent_name, session_id } = req.body;
+    if (!avatar_url)
+      return res.status(400).json({ success: false, error: 'avatar_url required' });
+
+    res.json({ success: true, session_id });
+
+    const payload = JSON.stringify({
+      action:       'avatar_prompt',
+      session_id:   session_id || '',
+      avatar_url,
+      agent_name:   agent_name || '',
+      callback_url: `${API_BASE_URL}/notify/avatar-prompt`,
+      user_email:   req.user.email || '',
+      triggered_at: new Date().toISOString()
+    });
+
+    fetch(WEBHOOK, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: payload
+    })
+    .then(async r => { const t = await r.text(); console.log('avatar_prompt webhook:', r.status, t); })
+    .catch(err => console.error('avatar_prompt webhook FAILED:', err.message));
+
+  } catch (err) {
+    console.error('research/avatar-prompt error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.post('/research/image-prompt', authMiddleware, async (req, res) => {
   try {
     const { session_id, property_image_url, avatar_url, prompt, action_type } = req.body;
@@ -1104,6 +1137,20 @@ app.post('/research/image-prompt', authMiddleware, async (req, res) => {
 
   } catch (err) {
     console.error('research/image-prompt error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── NOTIFY AVATAR PROMPT — called by n8n after generating agent intro prompt ─
+app.post('/notify/avatar-prompt', async (req, res) => {
+  try {
+    const { session_id, prompt } = req.body;
+    if (!prompt)
+      return res.status(400).json({ success: false, error: 'prompt required' });
+    const payload = JSON.stringify({ type: 'avatar_prompt', session_id: session_id || '', prompt });
+    clients.forEach(clientRes => sseWrite(clientRes, payload));
+    res.json({ success: true, notified: clients.size });
+  } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
