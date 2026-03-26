@@ -109,11 +109,11 @@ async function setupDB() {
       updated_at TIMESTAMP DEFAULT NOW(),
       UNIQUE(user_email, funnel)
     )
-  `);
+  `).catch(err => console.warn('user_sessions table warning:', err.message));
 
   console.log('DB ready');
 }
-setupDB().catch(console.error);
+setupDB().catch(err => console.error('setupDB failed (non-fatal):', err.message));
 
 // ── JWT MIDDLEWARE ────────────────────────────────────────
 function authMiddleware(req, res, next) {
@@ -144,8 +144,17 @@ async function atFetch(path, opts = {}) {
 // ── SSE HELPER — flushes after write (fixes Railway nginx buffering) ──────
 // FIX 1: Always call res.flush() after writing to SSE stream
 function sseWrite(clientRes, payload) {
-  clientRes.write(`data: ${payload}\n\n`);
-  if (clientRes.flush) clientRes.flush();
+  try {
+    clientRes.write(`data: ${payload}\n\n`);
+    if (clientRes.flush) clientRes.flush();
+  } catch(e) { /* connection already closed */ }
+}
+
+// Broadcast to ALL connected clients across ALL users
+function sseBroadcast(payload) {
+  clients.forEach(function(conns) {
+    conns.forEach(function(res) { sseWrite(res, payload); });
+  });
 }
 
 // ── HEALTH ────────────────────────────────────────────────
@@ -296,7 +305,7 @@ app.get('/airtable/scenes/debug', authMiddleware, async (req, res) => {
 });
 
 // ── SSE — connected clients ───────────────────────────────
-const clients = new Map();
+const clients = new Map(); // userId -> Set of response objects
 
 app.get('/events', (req, res) => {
   const token = req.query.token;
@@ -312,7 +321,8 @@ app.get('/events', (req, res) => {
   res.flushHeaders();
 
   const userId = user.id;
-  clients.set(userId, res);
+  if (!clients.has(userId)) clients.set(userId, new Set());
+  clients.get(userId).add(res);
 
   // FIX 1: flush the ping so Railway proxy doesn't buffer it
   const ping = setInterval(() => {
@@ -322,7 +332,11 @@ app.get('/events', (req, res) => {
 
   req.on('close', () => {
     clearInterval(ping);
-    clients.delete(userId);
+    const userConns = clients.get(userId);
+    if (userConns) {
+      userConns.delete(res);
+      if (userConns.size === 0) clients.delete(userId);
+    }
   });
 });
 
@@ -334,8 +348,8 @@ app.post('/notify/scene', async (req, res) => {
       return res.status(400).json({ success: false, error: 'record_id and status required' });
     const payload = JSON.stringify({ record_id, status, task: task || '' });
     // FIX 1: use sseWrite helper which calls flush()
-    clients.forEach((clientRes) => sseWrite(clientRes, payload));
-    res.json({ success: true, notified: clients.size });
+    sseBroadcast(payload);
+    var total = 0; clients.forEach(function(s){ total += s.size; }); res.json({ success: true, notified: total });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -985,8 +999,8 @@ app.post('/notify/research', async (req, res) => {
     });
 
     // FIX 1: use sseWrite which calls flush()
-    clients.forEach((clientRes) => sseWrite(clientRes, payload));
-    res.json({ success: true, notified: clients.size });
+    sseBroadcast(payload);
+    var total = 0; clients.forEach(function(s){ total += s.size; }); res.json({ success: true, notified: total });
   } catch (err) {
     console.error('notify/research error:', err.message);
     res.status(500).json({ success: false, error: err.message });
@@ -1092,8 +1106,8 @@ app.post('/notify/topics', async (req, res) => {
     });
 
     // FIX 1: use sseWrite which calls flush()
-    clients.forEach((clientRes) => sseWrite(clientRes, payload));
-    res.json({ success: true, notified: clients.size });
+    sseBroadcast(payload);
+    var total = 0; clients.forEach(function(s){ total += s.size; }); res.json({ success: true, notified: total });
   } catch (err) {
     console.error('notify/topics error:', err.message);
     res.status(500).json({ success: false, error: err.message });
@@ -1179,8 +1193,8 @@ app.post('/notify/avatar-prompt', async (req, res) => {
     if (!prompt)
       return res.status(400).json({ success: false, error: 'prompt required' });
     const payload = JSON.stringify({ type: 'avatar_prompt', session_id: session_id || '', prompt });
-    clients.forEach(clientRes => sseWrite(clientRes, payload));
-    res.json({ success: true, notified: clients.size });
+    sseBroadcast(payload);
+    var total = 0; clients.forEach(function(s){ total += s.size; }); res.json({ success: true, notified: total });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -1194,8 +1208,8 @@ app.post('/notify/regen-prompt', async (req, res) => {
 
     const payload = JSON.stringify({ type: 'regen_prompt', session_id, prompt });
     // FIX 1: use sseWrite which calls flush()
-    clients.forEach(clientRes => sseWrite(clientRes, payload));
-    res.json({ success: true, notified: clients.size });
+    sseBroadcast(payload);
+    var total = 0; clients.forEach(function(s){ total += s.size; }); res.json({ success: true, notified: total });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -1209,8 +1223,8 @@ app.post('/notify/result-image', async (req, res) => {
 
     const payload = JSON.stringify({ type: 'result_image', session_id, image_url });
     // FIX 1: use sseWrite which calls flush()
-    clients.forEach(clientRes => sseWrite(clientRes, payload));
-    res.json({ success: true, notified: clients.size });
+    sseBroadcast(payload);
+    var total = 0; clients.forEach(function(s){ total += s.size; }); res.json({ success: true, notified: total });
   } catch (err) {
     console.error('notify/result-image error:', err.message);
     res.status(500).json({ success: false, error: err.message });
@@ -1305,7 +1319,7 @@ app.post('/notify/rec-topics', async (req, res) => {
     if (!topics || !Array.isArray(topics))
       return res.status(400).json({ success: false, error: 'topics array required' });
     const payload = JSON.stringify({ type: 'rec_topics', session_id: session_id || '', topics });
-    clients.forEach(clientRes => sseWrite(clientRes, payload));
+    sseBroadcast(payload);
     // Persist topics to DB if session exists
     if (session_id) {
       await db.query(
@@ -1313,7 +1327,7 @@ app.post('/notify/rec-topics', async (req, res) => {
         [session_id, JSON.stringify(topics)]
       ).catch(() => {});
     }
-    res.json({ success: true, notified: clients.size });
+    var total = 0; clients.forEach(function(s){ total += s.size; }); res.json({ success: true, notified: total });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -1326,8 +1340,8 @@ app.post('/notify/rec-script', async (req, res) => {
     if (!scenes || !Array.isArray(scenes))
       return res.status(400).json({ success: false, error: 'scenes array required' });
     const payload = JSON.stringify({ type: 'rec_script', session_id: session_id || '', scenes });
-    clients.forEach(clientRes => sseWrite(clientRes, payload));
-    res.json({ success: true, notified: clients.size });
+    sseBroadcast(payload);
+    var total = 0; clients.forEach(function(s){ total += s.size; }); res.json({ success: true, notified: total });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -1522,6 +1536,35 @@ app.post('/28property/start-pipeline', authMiddleware, async (req, res) => {
 
   } catch (err) {
     console.error('28property/start-pipeline error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+
+// n8n callback — pipeline ready (scenes + script generated)
+app.post('/notify/pipeline-ready', async (req, res) => {
+  try {
+    const { session_id, scenes, property, images, topic, agent_name, avatar_url, user_email, scene_count } = req.body;
+    if (!scenes || !Array.isArray(scenes))
+      return res.status(400).json({ success: false, error: 'scenes array required' });
+
+    const payload = JSON.stringify({
+      type: 'pipeline_ready',
+      session_id: session_id || '',
+      scenes,
+      scene_count: scene_count || scenes.length,
+      property,
+      images,
+      topic,
+      agent_name,
+      avatar_url,
+      user_email
+    });
+
+    sseBroadcast(payload);
+    var total = 0; clients.forEach(function(s){ total += s.size; }); res.json({ success: true, notified: total });
+  } catch (err) {
+    console.error('notify/pipeline-ready error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
