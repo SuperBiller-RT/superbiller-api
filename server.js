@@ -1490,6 +1490,41 @@ app.delete('/session/clear', authMiddleware, async (req, res) => {
   }
 });
 
+
+// ══════════════════════════════════════════════════════════
+// 28PROPERTY JOB DETAILS — receives pipeline payload from
+// frontend and forwards to n8n /webhook/28property-job-details
+// ══════════════════════════════════════════════════════════
+
+const JOB_DETAILS_WEBHOOK = 'https://primary-production-ab4a6.up.railway.app/webhook/28property-job-details';
+
+app.post('/28property/start-pipeline', authMiddleware, async (req, res) => {
+  try {
+    const payload = {
+      ...req.body,
+      user_email: req.user.email || '',
+      user_name:  req.user.name  || '',
+      user_role:  req.user.role  || '',
+      triggered_at: new Date().toISOString()
+    };
+
+    // Respond immediately so frontend doesn't wait
+    res.json({ success: true, message: 'Pipeline triggered' });
+
+    fetch(JOB_DETAILS_WEBHOOK, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    .then(async r => { const t = await r.text(); console.log('[job-details webhook]', r.status, t.slice(0, 120)); })
+    .catch(err => console.error('[job-details webhook] FAILED:', err.message));
+
+  } catch (err) {
+    console.error('28property/start-pipeline error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ══════════════════════════════════════════════════════════
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
