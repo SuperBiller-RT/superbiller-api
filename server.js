@@ -145,11 +145,13 @@ app.get('/health', (req, res) => res.json({ status: 'ok', ts: new Date() }));
 
 app.post('/auth/register', async (req, res) => {
   try {
-    const { name, email, password, role = 'editor' } = req.body;
+    const { name, email, password, role } = req.body;
     if (!name || !email || !password)
       return res.json({ success: false, message: 'Name, email and password are required' });
     if (password.length < 6)
       return res.json({ success: false, message: 'Password must be at least 6 characters' });
+    const allowedRoles = ['28property_editor', 'recruitment_editor', 'admin', 'management'];
+    const assignedRole = allowedRoles.includes(role) ? role : '28property_editor';
     const allowedDomains = ['@superbiller.com', '@recruitmenttraining'];
     if (!allowedDomains.some(d => email.endsWith(d)))
       return res.json({ success: false, message: 'Invalid business email.' });
@@ -159,7 +161,7 @@ app.post('/auth/register', async (req, res) => {
     const hash = await bcrypt.hash(password, 10);
     const result = await db.query(
       'INSERT INTO users (name, email, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id, name, email, role',
-      [name, email, hash, role]
+      [name, email, hash, assignedRole]
     );
     const user = result.rows[0];
     const token = jwt.sign({ id: user.id, email: user.email, name: user.name, role: user.role }, JWT_SECRET, { expiresIn: '8h' });
@@ -1315,6 +1317,93 @@ app.post('/notify/rec-script', async (req, res) => {
     clients.forEach(clientRes => sseWrite(clientRes, payload));
     res.json({ success: true, notified: clients.size });
   } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+
+// ══════════════════════════════════════════════════════════
+// HOME FEED — role-filtered job status
+// ══════════════════════════════════════════════════════════
+
+app.get('/home/feed', authMiddleware, async (req, res) => {
+  try {
+    const role = req.user.role || '28property_editor';
+
+    // Admin → redirect to dashboard (frontend handles this, but also return signal)
+    if (role === 'admin') {
+      return res.json({ success: true, role, redirect: '/dashboard' });
+    }
+
+    // Management → gets both pipelines summary
+    // 28property_editor → only 28property Airtable jobs
+    // recruitment_editor → only recruitment sessions from Postgres
+
+    const feed = { role, sections: [] };
+
+    // ── 28PROPERTY jobs (Airtable) ──────────────────────────
+    if (role === '28property_editor' || role === 'management') {
+      const data = await atFetch(
+        `/${AIRTABLE_PROPERTY}?maxRecords=50&sort[0][field]=no&sort[0][direction]=desc`
+      );
+      const records = data.records || [];
+      const jobs = records.map(r => ({
+        id:         r.id,
+        no:         r.fields.no         || '',
+        title:      r.fields.title       || r.fields.property_url || '—',
+        status:     r.fields.status      || 'Unknown',
+        agent:      r.fields.agent_name  || '',
+        created_at: r.fields.created_at  || r.createdTime || '',
+        url:        r.fields.property_url || ''
+      }));
+      const running   = jobs.filter(j => j.status === 'In Progress');
+      const errors    = jobs.filter(j => j.status === 'Error');
+      const completed = jobs.filter(j => j.status === 'Completed').slice(0, 10);
+
+      feed.sections.push({
+        pipeline: '28property',
+        label:    '28Property',
+        running,
+        errors,
+        completed
+      });
+    }
+
+    // ── RECRUITMENT sessions (Postgres) ─────────────────────
+    if (role === 'recruitment_editor' || role === 'management') {
+      const result = await db.query(
+        `SELECT session_id, user_email, status, chosen_topic, property_data, topics_data, created_at
+         FROM research_sessions
+         WHERE funnel = 'ai-recruitment'
+         ORDER BY created_at DESC
+         LIMIT 50`
+      );
+      const sessions = result.rows.map(r => {
+        const prop = r.property_data ? (typeof r.property_data === 'string' ? JSON.parse(r.property_data) : r.property_data) : null;
+        return {
+          id:           r.session_id,
+          title:        (prop && prop.title) || r.chosen_topic || r.session_id.slice(0,12) + '…',
+          status:       r.status || 'pending',
+          user_email:   r.user_email || '',
+          created_at:   r.created_at || ''
+        };
+      });
+      const running   = sessions.filter(s => ['pending','property_ready','topics_ready','topic_selected'].includes(s.status));
+      const completed = sessions.filter(s => s.status === 'completed').slice(0, 10);
+      const errors    = sessions.filter(s => s.status === 'error');
+
+      feed.sections.push({
+        pipeline:  'recruitment',
+        label:     'AI Recruitment',
+        running,
+        errors,
+        completed
+      });
+    }
+
+    res.json({ success: true, ...feed });
+  } catch (err) {
+    console.error('home/feed error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
