@@ -99,6 +99,18 @@ async function setupDB() {
   await db.query(`ALTER TABLE research_sessions ADD COLUMN IF NOT EXISTS property_data JSONB`).catch(() => {});
   await db.query(`ALTER TABLE research_sessions ADD COLUMN IF NOT EXISTS topics_data JSONB`).catch(() => {});
 
+  // User sessions table — persists frontend session state to Postgres
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS user_sessions (
+      id SERIAL PRIMARY KEY,
+      user_email VARCHAR(200) NOT NULL,
+      funnel VARCHAR(50) NOT NULL,
+      session_data JSONB NOT NULL,
+      updated_at TIMESTAMP DEFAULT NOW(),
+      UNIQUE(user_email, funnel)
+    )
+  `);
+
   console.log('DB ready');
 }
 setupDB().catch(console.error);
@@ -1404,6 +1416,76 @@ app.get('/home/feed', authMiddleware, async (req, res) => {
     res.json({ success: true, ...feed });
   } catch (err) {
     console.error('home/feed error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+
+// ══════════════════════════════════════════════════════════
+// USER SESSION ROUTES — persist frontend session to Postgres
+// ══════════════════════════════════════════════════════════
+
+// Save session — upsert by user_email + funnel
+app.post('/session/save', authMiddleware, async (req, res) => {
+  try {
+    const { funnel, session_data } = req.body;
+    if (!funnel || !session_data)
+      return res.status(400).json({ success: false, error: 'funnel and session_data required' });
+
+    await db.query(`
+      INSERT INTO user_sessions (user_email, funnel, session_data, updated_at)
+      VALUES ($1, $2, $3, NOW())
+      ON CONFLICT (user_email, funnel)
+      DO UPDATE SET session_data = $3, updated_at = NOW()
+    `, [req.user.email, funnel, JSON.stringify(session_data)]);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('session/save error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Load session — get latest by user_email + funnel
+app.get('/session/load', authMiddleware, async (req, res) => {
+  try {
+    const { funnel } = req.query;
+    if (!funnel)
+      return res.status(400).json({ success: false, error: 'funnel query param required' });
+
+    const result = await db.query(
+      'SELECT session_data, updated_at FROM user_sessions WHERE user_email = $1 AND funnel = $2',
+      [req.user.email, funnel]
+    );
+
+    if (result.rows.length === 0)
+      return res.json({ success: true, session: null });
+
+    const row = result.rows[0];
+    const data = typeof row.session_data === 'string'
+      ? JSON.parse(row.session_data)
+      : row.session_data;
+
+    res.json({ success: true, session: data, updated_at: row.updated_at });
+  } catch (err) {
+    console.error('session/load error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Clear session — delete by user_email + funnel
+app.delete('/session/clear', authMiddleware, async (req, res) => {
+  try {
+    const { funnel } = req.body;
+    if (!funnel)
+      return res.status(400).json({ success: false, error: 'funnel required' });
+
+    await db.query(
+      'DELETE FROM user_sessions WHERE user_email = $1 AND funnel = $2',
+      [req.user.email, funnel]
+    );
+    res.json({ success: true });
+  } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
