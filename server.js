@@ -68,10 +68,13 @@ async function setupDB() {
       mime_type VARCHAR(100),
       data BYTEA NOT NULL,
       agent_name VARCHAR(200),
+      avatar_prompt TEXT,
       user_email VARCHAR(200),
       created_at TIMESTAMP DEFAULT NOW()
     )
   `);
+  // Non-destructive migration — add avatar_prompt if not exists
+  await db.query(`ALTER TABLE property_agent_images ADD COLUMN IF NOT EXISTS avatar_prompt TEXT`).catch(() => {});
 
   // FIX 2: Added property_data and topics_data JSONB columns
   // These store the full payload so the frontend can recover missed SSE events
@@ -886,6 +889,24 @@ app.patch('/28property/avatar/:id/name', authMiddleware, async (req, res) => {
   }
 });
 
+
+// Save avatar prompt permanently to agent record
+app.patch('/28property/avatar/:id/prompt', authMiddleware, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const { avatar_prompt } = req.body;
+    if (!avatar_prompt || !avatar_prompt.trim())
+      return res.status(400).json({ success: false, error: 'avatar_prompt required' });
+    await db.query(
+      'UPDATE property_agent_images SET avatar_prompt = $1 WHERE id = $2',
+      [avatar_prompt.trim(), id]
+    );
+    res.json({ success: true, id, avatar_prompt: avatar_prompt.trim() });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.delete('/28property/avatar/:id', authMiddleware, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
@@ -899,7 +920,7 @@ app.delete('/28property/avatar/:id', authMiddleware, async (req, res) => {
 app.get('/28property/avatars', authMiddleware, async (req, res) => {
   try {
     const result = await db.query(
-      `SELECT id, filename, agent_name, user_email, created_at
+      `SELECT id, filename, agent_name, avatar_prompt, user_email, created_at
        FROM property_agent_images
        ORDER BY created_at DESC
        LIMIT 50`
@@ -908,6 +929,7 @@ app.get('/28property/avatars', authMiddleware, async (req, res) => {
       id: r.id,
       filename: r.filename,
       agent_name: r.agent_name || '',
+      avatar_prompt: r.avatar_prompt || '',
       user_email: r.user_email || '',
       created_at: r.created_at,
       image_url: `${API_BASE_URL}/28property/image/${r.id}`
