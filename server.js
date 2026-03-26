@@ -1259,6 +1259,66 @@ app.post('/compose-image', authMiddleware, async (req, res) => {
   }
 });
 
+
+// ══════════════════════════════════════════════════════════
+// AI RECRUITMENT ROUTES
+// ══════════════════════════════════════════════════════════
+
+const REC_WEBHOOK = 'https://primary-production-ab4a6.up.railway.app/webhook/ai-recruitment';
+
+// Fire any action to the ai-recruitment n8n webhook
+app.post('/recruitment/fire', authMiddleware, async (req, res) => {
+  try {
+    const payload = req.body;
+    if (!payload.action) return res.status(400).json({ success: false, error: 'action required' });
+    res.json({ success: true, action: payload.action });
+    fetch(REC_WEBHOOK, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    .then(async r => { const t = await r.text(); console.log('[rec webhook]', payload.action, r.status, t.slice(0,120)); })
+    .catch(err => console.error('[rec webhook] FAILED:', err.message));
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// n8n callback — topics ready
+app.post('/notify/rec-topics', async (req, res) => {
+  try {
+    const { session_id, topics } = req.body;
+    if (!topics || !Array.isArray(topics))
+      return res.status(400).json({ success: false, error: 'topics array required' });
+    const payload = JSON.stringify({ type: 'rec_topics', session_id: session_id || '', topics });
+    clients.forEach(clientRes => sseWrite(clientRes, payload));
+    // Persist topics to DB if session exists
+    if (session_id) {
+      await db.query(
+        `UPDATE research_sessions SET topics_data = $2, status = 'topics_ready' WHERE session_id = $1`,
+        [session_id, JSON.stringify(topics)]
+      ).catch(() => {});
+    }
+    res.json({ success: true, notified: clients.size });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// n8n callback — script/scenes ready
+app.post('/notify/rec-script', async (req, res) => {
+  try {
+    const { session_id, scenes } = req.body;
+    if (!scenes || !Array.isArray(scenes))
+      return res.status(400).json({ success: false, error: 'scenes array required' });
+    const payload = JSON.stringify({ type: 'rec_script', session_id: session_id || '', scenes });
+    clients.forEach(clientRes => sseWrite(clientRes, payload));
+    res.json({ success: true, notified: clients.size });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ══════════════════════════════════════════════════════════
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
