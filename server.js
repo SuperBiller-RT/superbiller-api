@@ -1496,15 +1496,16 @@ app.delete('/session/clear', authMiddleware, async (req, res) => {
 // frontend and forwards to n8n /webhook/28property-job-details
 // ══════════════════════════════════════════════════════════
 
-const JOB_DETAILS_WEBHOOK = 'https://primary-production-ab4a6.up.railway.app/webhook/28property-job-details';
+const JOB_DETAILS_WEBHOOK = 'https://primary-production-ab4a6.up.railway.app/webhook/28property';
 
 app.post('/28property/start-pipeline', authMiddleware, async (req, res) => {
   try {
     const payload = {
       ...req.body,
-      user_email: req.user.email || '',
-      user_name:  req.user.name  || '',
-      user_role:  req.user.role  || '',
+      action:      'start_pipeline',
+      user_email:  req.user.email || '',
+      user_name:   req.user.name  || '',
+      user_role:   req.user.role  || '',
       triggered_at: new Date().toISOString()
     };
 
