@@ -1704,6 +1704,57 @@ app.get('/regen-result/:scene_id/:col', authMiddleware, async (req, res) => {
   }
 });
 
+
+// ── REGEN TOPIC PART — rewrites title or body using GPT directly ─────────────
+app.post('/28property/regen-topic', authMiddleware, async (req, res) => {
+  try {
+    const { part, current_title, current_body, property_title, property_desc, agent_name } = req.body;
+
+    const context = `Property: ${property_title || ''}
+Agent: ${agent_name || ''}
+Description: ${property_desc || ''}
+
+Current Title: ${current_title || ''}
+Current Body: ${current_body || ''}`;
+
+    const prompt = part === 'title'
+      ? `You are a real estate content writer. Rewrite ONLY the title below to be more engaging and SEO-friendly. Keep it concise (under 80 characters). Return ONLY the new title, nothing else.
+
+Context:
+${context}
+
+Rewrite the title only:`
+      : `You are a real estate content writer. Rewrite ONLY the body text below to be more engaging, persuasive and well-structured. Keep the same key facts. Return ONLY the new body text, nothing else.
+
+Context:
+${context}
+
+Rewrite the body only:`;
+
+    const r = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': \`Bearer \${process.env.OPENAI_API_KEY}\`
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: part === 'title' ? 100 : 800,
+        temperature: 0.8
+      })
+    });
+
+    const data = await r.json();
+    const result = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
+    if (!result) return res.json({ success: false, error: 'No result from GPT' });
+    res.json({ success: true, result: result.trim() });
+  } catch (err) {
+    console.error('regen-topic error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ══════════════════════════════════════════════════════════
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
