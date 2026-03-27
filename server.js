@@ -319,7 +319,7 @@ app.get('/airtable/scenes/debug', authMiddleware, async (req, res) => {
 });
 
 // ── SSE — connected clients ───────────────────────────────
-const clients = new Map(); // userId -> Set of response objects
+const clients = new Map(); // userId -> Set of response objects // userId -> Set of response objects
 
 app.get('/events', (req, res) => {
   const token = req.query.token;
@@ -1678,8 +1678,8 @@ app.post('/notify/regen-line', async (req, res) => {
 
     // Broadcast via SSE
     const payload = JSON.stringify({ type: 'regen_line', session_id: session_id || '', scene_id, col, new_line });
-    clients.forEach(clientRes => sseWrite(clientRes, payload));
-    res.json({ success: true, notified: clients.size });
+    sseBroadcast(payload);
+    var _total = 0; clients.forEach(function(s){ _total += s.size; }); res.json({ success: true, notified: _total });
   } catch (err) {
     console.error('notify/regen-line error:', err.message);
     res.status(500).json({ success: false, error: err.message });
@@ -1735,7 +1735,7 @@ Rewrite the body only:`;
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': \`Bearer \${process.env.OPENAI_API_KEY}\`
+        'Authorization': `Bearer \${process.env.OPENAI_API_KEY}`
       },
       body: JSON.stringify({
         model: 'gpt-4o',
