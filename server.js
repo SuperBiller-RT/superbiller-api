@@ -114,6 +114,17 @@ async function setupDB() {
     )
   `).catch(err => console.warn('user_sessions table warning:', err.message));
 
+  // Regen line results — store so frontend can poll if SSE missed
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS regen_results (
+      id SERIAL PRIMARY KEY,
+      scene_id VARCHAR(64) NOT NULL,
+      col VARCHAR(64) NOT NULL,
+      new_line TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `).catch(() => {});
+
   console.log('DB ready');
 }
 setupDB().catch(err => console.error('setupDB failed (non-fatal):', err.message));
@@ -1652,16 +1663,43 @@ app.post('/28property/regen-line', authMiddleware, async (req, res) => {
   }
 });
 
-// n8n callback — regenned line ready, push via SSE
+// n8n callback — regenned line ready, push via SSE + store in DB for polling
 app.post('/notify/regen-line', async (req, res) => {
   try {
     const { session_id, scene_id, col, new_line } = req.body;
     if (!new_line) return res.status(400).json({ success: false, error: 'new_line required' });
+
+    // Store in DB so frontend can poll if SSE missed
+    await db.query(
+      `INSERT INTO regen_results (scene_id, col, new_line) VALUES ($1, $2, $3)
+       ON CONFLICT DO NOTHING`,
+      [scene_id || '', col || '', new_line]
+    ).catch(() => {});
+
+    // Broadcast via SSE
     const payload = JSON.stringify({ type: 'regen_line', session_id: session_id || '', scene_id, col, new_line });
     clients.forEach(clientRes => sseWrite(clientRes, payload));
     res.json({ success: true, notified: clients.size });
   } catch (err) {
     console.error('notify/regen-line error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Poll for regen result — frontend calls this if SSE missed
+app.get('/regen-result/:scene_id/:col', authMiddleware, async (req, res) => {
+  try {
+    const { scene_id, col } = req.params;
+    const result = await db.query(
+      `SELECT new_line FROM regen_results WHERE scene_id = $1 AND col = $2
+       ORDER BY created_at DESC LIMIT 1`,
+      [scene_id, col]
+    );
+    if (result.rows.length === 0) return res.json({ success: true, ready: false });
+    // Delete after reading so it's one-shot
+    await db.query('DELETE FROM regen_results WHERE scene_id = $1 AND col = $2', [scene_id, col]);
+    res.json({ success: true, ready: true, new_line: result.rows[0].new_line });
+  } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
