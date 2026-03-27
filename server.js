@@ -1662,10 +1662,19 @@ Return ONLY the rewritten line. No quotes. No labels. No explanation.`;
     const text = await r.text();
     let data; try { data = JSON.parse(text); } catch { data = { raw: text }; }
 
-    // n8n should return { new_line: "..." }
-    if (data.new_line) {
-      return res.json({ success: true, new_line: data.new_line });
+    // Extract new_line from whatever n8n returns
+    const newLine =
+      data.new_line ||
+      data.text ||
+      (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) ||
+      (data.message && data.message.content) ||
+      (Array.isArray(data) && data[0] && data[0].new_line) ||
+      null;
+
+    if (newLine && newLine.trim()) {
+      return res.json({ success: true, new_line: newLine.trim() });
     }
+    console.error('regen-line: unexpected response shape:', JSON.stringify(data).slice(0, 300));
     res.json({ success: false, error: 'No new_line in response', raw: data });
   } catch (err) {
     console.error('regen-line error:', err.message);
