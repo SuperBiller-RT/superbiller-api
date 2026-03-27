@@ -830,6 +830,22 @@ app.get('/28property/image/:id', async (req, res) => {
       return res.status(404).json({ error: 'Image not found' });
 
     const { data, mime_type, filename } = result.rows[0];
+
+    // Resize if ?w= requested — use sharp if available
+    const targetWidth = req.query.w ? parseInt(req.query.w) : null;
+    if (targetWidth) {
+      try {
+        const sharp = require('sharp');
+        const resized = await sharp(data)
+          .resize({ width: targetWidth, withoutEnlargement: true })
+          .jpeg({ quality: 82 })
+          .toBuffer();
+        res.setHeader('Content-Type', 'image/jpeg');
+        res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
+        return res.send(resized);
+      } catch(e) { /* sharp not available — fall through to original */ }
+    }
+
     res.setHeader('Content-Type', mime_type);
     res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
     res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
