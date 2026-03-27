@@ -890,6 +890,32 @@ app.patch('/28property/avatar/:id/name', authMiddleware, async (req, res) => {
 });
 
 
+
+// Internal — n8n checks if avatar already has a saved prompt
+// No auth required — only accessible from n8n server-side
+app.get('/28property/avatar/:id/prompt', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (!id || isNaN(id))
+      return res.status(400).json({ success: false, error: 'Invalid id' });
+    const result = await db.query(
+      'SELECT id, agent_name, avatar_prompt FROM property_agent_images WHERE id = $1',
+      [id]
+    );
+    if (result.rows.length === 0)
+      return res.json({ success: true, has_prompt: false, avatar_prompt: null });
+    const row = result.rows[0];
+    res.json({
+      success: true,
+      has_prompt: !!(row.avatar_prompt && row.avatar_prompt.trim()),
+      avatar_prompt: row.avatar_prompt || null,
+      agent_name: row.agent_name || ''
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Save avatar prompt permanently to agent record
 app.patch('/28property/avatar/:id/prompt', authMiddleware, async (req, res) => {
   try {
@@ -1587,6 +1613,62 @@ app.post('/notify/pipeline-ready', async (req, res) => {
     var total = 0; clients.forEach(function(s){ total += s.size; }); res.json({ success: true, notified: total });
   } catch (err) {
     console.error('notify/pipeline-ready error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+
+// ── AI REGEN LINE — rewrites a single script line using GPT via n8n ──────────
+app.post('/28property/regen-line', authMiddleware, async (req, res) => {
+  try {
+    const { lang, scene_number, current_line, full_script, instruction, job_title, scene_id, col } = req.body;
+
+    const prompt = `You are a professional real estate video scriptwriter.
+
+The video is about: ${job_title || 'a property listing'}
+
+Here is the FULL script for context (${lang}):
+${full_script}
+
+You need to rewrite ONLY Scene ${scene_number} (shown below). Keep it consistent with the rest of the script in tone, style and length.
+
+Current Scene ${scene_number} line:
+"${current_line}"
+
+${instruction ? 'Additional instruction: ' + instruction : 'Rewrite this line to be more engaging while keeping the same meaning and length.'}
+
+Return ONLY the rewritten line. No quotes. No labels. No explanation.`;
+
+    // Call n8n regen_line action
+    const r = await fetch(WEBHOOK, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action:       'regen_line',
+        lang,
+        scene_number,
+        current_line,
+        full_script,
+        instruction:  instruction || '',
+        job_title:    job_title || '',
+        prompt,
+        scene_id:     scene_id || '',
+        col:          col || '',
+        user_email:   req.user.email || '',
+        triggered_at: new Date().toISOString()
+      })
+    });
+
+    const text = await r.text();
+    let data; try { data = JSON.parse(text); } catch { data = { raw: text }; }
+
+    // n8n should return { new_line: "..." }
+    if (data.new_line) {
+      return res.json({ success: true, new_line: data.new_line });
+    }
+    res.json({ success: false, error: 'No new_line in response', raw: data });
+  } catch (err) {
+    console.error('regen-line error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
