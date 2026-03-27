@@ -1618,66 +1618,50 @@ app.post('/notify/pipeline-ready', async (req, res) => {
 });
 
 
-// ── AI REGEN LINE — rewrites a single script line using GPT via n8n ──────────
+// ── AI REGEN LINE — fires n8n, result comes back via SSE ──────────────────────
 app.post('/28property/regen-line', authMiddleware, async (req, res) => {
   try {
     const { lang, scene_number, current_line, full_script, instruction, job_title, scene_id, col } = req.body;
 
-    const prompt = `You are a professional real estate video scriptwriter.
+    // Respond immediately — result will come back via SSE /notify/regen-line
+    res.json({ success: true, message: 'Regenerating...' });
 
-The video is about: ${job_title || 'a property listing'}
-
-Here is the FULL script for context (${lang}):
-${full_script}
-
-You need to rewrite ONLY Scene ${scene_number} (shown below). Keep it consistent with the rest of the script in tone, style and length.
-
-Current Scene ${scene_number} line:
-"${current_line}"
-
-${instruction ? 'Additional instruction: ' + instruction : 'Rewrite this line to be more engaging while keeping the same meaning and length.'}
-
-Return ONLY the rewritten line. No quotes. No labels. No explanation.`;
-
-    // Call n8n regen_line action
-    const r = await fetch(WEBHOOK, {
+    fetch(WEBHOOK, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         action:       'regen_line',
-        lang,
+        lang:          lang || 'EN',
         scene_number,
         current_line,
         full_script,
         instruction:  instruction || '',
         job_title:    job_title || '',
-        prompt,
         scene_id:     scene_id || '',
         col:          col || '',
         user_email:   req.user.email || '',
         triggered_at: new Date().toISOString()
       })
-    });
+    })
+    .then(async r => { const t = await r.text(); console.log('[regen-line webhook]', r.status, t.slice(0,100)); })
+    .catch(err => console.error('[regen-line webhook] FAILED:', err.message));
 
-    const text = await r.text();
-    let data; try { data = JSON.parse(text); } catch { data = { raw: text }; }
-
-    // Extract new_line from whatever n8n returns
-    const newLine =
-      data.new_line ||
-      data.text ||
-      (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) ||
-      (data.message && data.message.content) ||
-      (Array.isArray(data) && data[0] && data[0].new_line) ||
-      null;
-
-    if (newLine && newLine.trim()) {
-      return res.json({ success: true, new_line: newLine.trim() });
-    }
-    console.error('regen-line: unexpected response shape:', JSON.stringify(data).slice(0, 300));
-    res.json({ success: false, error: 'No new_line in response', raw: data });
   } catch (err) {
     console.error('regen-line error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// n8n callback — regenned line ready, push via SSE
+app.post('/notify/regen-line', async (req, res) => {
+  try {
+    const { session_id, scene_id, col, new_line } = req.body;
+    if (!new_line) return res.status(400).json({ success: false, error: 'new_line required' });
+    const payload = JSON.stringify({ type: 'regen_line', session_id: session_id || '', scene_id, col, new_line });
+    clients.forEach(clientRes => sseWrite(clientRes, payload));
+    res.json({ success: true, notified: clients.size });
+  } catch (err) {
+    console.error('notify/regen-line error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
