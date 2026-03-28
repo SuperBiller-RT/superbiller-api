@@ -131,6 +131,9 @@ setupDB().catch(err => console.error('setupDB failed (non-fatal):', err.message)
 
 // ── JWT MIDDLEWARE ────────────────────────────────────────
 function authMiddleware(req, res, next) {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Accept, Authorization');
   const header = req.headers['authorization'];
   if (!header) return res.status(401).json({ success: false, message: 'No token' });
   const token = header.replace('Bearer ', '');
