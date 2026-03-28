@@ -53,25 +53,20 @@ const WEBHOOK           = 'https://primary-production-ab4a6.up.railway.app/webho
 const _imageJobs = new Map();
 function _storeImageJob(session_id, property_image_url, action) {
   const key = (session_id || '') + ':' + property_image_url;
-  _imageJobs.set(key, { property_image_url, action, ts: Date.now() });
+  _imageJobs.set(key, { session_id, property_image_url, action, ts: Date.now() });
   // Clean up jobs older than 30 minutes
   const cutoff = Date.now() - 30 * 60 * 1000;
   for (const [k, v] of _imageJobs) { if (v.ts < cutoff) _imageJobs.delete(k); }
 }
 function _findImageJob(session_id) {
-  // Find most recent job for this session
+  // Find most recent job for this session (fallback when n8n doesn't echo URL)
   let best = null;
   for (const [k, v] of _imageJobs) {
     if (k.startsWith((session_id || '') + ':')) {
-      if (!best || v.ts > best.ts) best = v;
+      if (!best || v.ts > best.ts) best = { ...v, key: k };
     }
   }
-  return best;
-}
-function _findImageJobByUrl(property_image_url) {
-  for (const [k, v] of _imageJobs) {
-    if (v.property_image_url === property_image_url) return v;
-  }
+  if (best) { _imageJobs.delete(best.key); return best; }
   return null;
 }
 
@@ -1359,10 +1354,14 @@ app.post('/notify/regen-prompt', async (req, res) => {
     if (!session_id || !prompt)
       return res.status(400).json({ success: false, error: 'session_id and prompt required' });
 
-    // Inject property_image_url from job store so frontend matches to correct image
-    const job = _findImageJob(session_id);
-    const property_image_url = req.body.property_image_url || (job ? job.property_image_url : '');
-    if (job) _imageJobs.delete((session_id || '') + ':' + job.property_image_url);
+    // Inject property_image_url — n8n may echo it, or look up from job store
+    let property_image_url = req.body.property_image_url || req.body.input_image_url || '';
+    if (!property_image_url) {
+      const job = _findImageJob(session_id);
+      if (job) { property_image_url = job.property_image_url; _imageJobs.delete((session_id || '') + ':' + job.property_image_url); }
+    } else {
+      _imageJobs.delete((session_id || '') + ':' + property_image_url);
+    }
 
     const payload = JSON.stringify({ ...req.body, type: 'regen_prompt', session_id, prompt, property_image_url });
     sseBroadcast(payload);
@@ -1380,10 +1379,15 @@ app.post('/notify/result-image', async (req, res) => {
     if (!session_id || !image_url)
       return res.status(400).json({ success: false, error: 'session_id and image_url required' });
 
-    // Inject property_image_url from job store so frontend can match to correct image
-    const job = _findImageJob(session_id);
-    const property_image_url = req.body.property_image_url || (job ? job.property_image_url : '');
-    if (job) _imageJobs.delete((session_id || '') + ':' + job.property_image_url); // clean up
+    // Inject property_image_url — n8n may echo it, or look up from job store
+    let property_image_url = req.body.property_image_url || req.body.input_image_url || '';
+    if (!property_image_url) {
+      const job = _findImageJob(session_id);
+      if (job) { property_image_url = job.property_image_url; _imageJobs.delete((session_id || '') + ':' + job.property_image_url); }
+    } else {
+      // Clean up matching job
+      _imageJobs.delete((session_id || '') + ':' + property_image_url);
+    }
 
     const payload = JSON.stringify({ ...req.body, type: 'result_image', session_id, image_url, property_image_url });
     sseBroadcast(payload);
