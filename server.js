@@ -1146,6 +1146,12 @@ app.post('/research/topics', authMiddleware, async (req, res) => {
     const { session_id, property, agent_name, agent_prompt } = req.body;
     if (!session_id) return res.status(400).json({ success: false, error: 'session_id required' });
 
+    // Clear old topics_data so poll doesn't return stale data
+    await db.query(
+      `UPDATE research_sessions SET topics_data = NULL, status = 'topics_pending' WHERE session_id = $1`,
+      [session_id]
+    ).catch(err => console.error('topics clear error:', err.message));
+
     res.json({ success: true, session_id });
 
     const payload = JSON.stringify({
