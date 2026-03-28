@@ -1258,8 +1258,6 @@ app.post('/research/avatar-prompt', authMiddleware, async (req, res) => {
 app.post('/research/image-prompt', authMiddleware, async (req, res) => {
   try {
     const { session_id, property_image_url, avatar_url, prompt, action_type, agent_name, agent_prompt } = req.body;
-    if (!session_id) return res.status(400).json({ success: false, error: 'session_id required' });
-
     const ALLOWED_ACTIONS = ['add_avatar', 'regen_prompt'];
     const action = ALLOWED_ACTIONS.includes(action_type) ? action_type : 'add_avatar';
 
