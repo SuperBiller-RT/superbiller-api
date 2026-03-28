@@ -369,8 +369,7 @@ app.post('/notify/scene', async (req, res) => {
     const { record_id, status, task } = req.body;
     if (!record_id || !status)
       return res.status(400).json({ success: false, error: 'record_id and status required' });
-    const payload = JSON.stringify({ record_id, status, task: task || '' });
-    // FIX 1: use sseWrite helper which calls flush()
+    const payload = JSON.stringify({ ...req.body, record_id, status, task: task || '' });
     sseBroadcast(payload);
     var total = 0; clients.forEach(function(s){ total += s.size; }); res.json({ success: true, notified: total });
   } catch (err) {
@@ -1078,6 +1077,7 @@ app.post('/notify/research', async (req, res) => {
     );
 
     const payload = JSON.stringify({
+      ...req.body,
       type:       'research_property',
       session_id,
       property
@@ -1193,6 +1193,7 @@ app.post('/notify/topics', async (req, res) => {
     ).catch(err => console.error('topics_data store error:', err.message));
 
     const payload = JSON.stringify({
+      ...req.body,
       type: 'research_topics',
       session_id,
       topics
@@ -1286,7 +1287,7 @@ app.post('/notify/avatar-prompt', async (req, res) => {
     const { session_id, prompt } = req.body;
     if (!prompt)
       return res.status(400).json({ success: false, error: 'prompt required' });
-    const payload = JSON.stringify({ type: 'avatar_prompt', session_id: session_id || '', prompt });
+    const payload = JSON.stringify({ ...req.body, type: 'avatar_prompt', session_id: session_id || '', prompt });
     sseBroadcast(payload);
     var total = 0; clients.forEach(function(s){ total += s.size; }); res.json({ success: true, notified: total });
   } catch (err) {
@@ -1315,7 +1316,7 @@ app.post('/notify/result-image', async (req, res) => {
     if (!session_id || !image_url)
       return res.status(400).json({ success: false, error: 'session_id and image_url required' });
 
-    const payload = JSON.stringify({ type: 'result_image', session_id, image_url });
+    const payload = JSON.stringify({ ...req.body, type: 'result_image', session_id, image_url });
     // FIX 1: use sseWrite which calls flush()
     sseBroadcast(payload);
     var total = 0; clients.forEach(function(s){ total += s.size; }); res.json({ success: true, notified: total });
@@ -1712,7 +1713,7 @@ app.post('/notify/regen-line', async (req, res) => {
     ).catch(() => {});
 
     // Broadcast via SSE
-    const payload = JSON.stringify({ type: 'regen_line', session_id: session_id || '', scene_id, col, new_line });
+    const payload = JSON.stringify({ ...req.body, type: 'regen_line', session_id: session_id || '', scene_id, col, new_line });
     sseBroadcast(payload);
     var _total = 0; clients.forEach(function(s){ _total += s.size; }); res.json({ success: true, notified: _total });
   } catch (err) {
