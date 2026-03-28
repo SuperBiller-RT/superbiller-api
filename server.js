@@ -831,27 +831,27 @@ app.get('/28property/image/:id', async (req, res) => {
 
     const { data, mime_type, filename } = result.rows[0];
 
-    // Resize if ?w= requested — use sharp if available
-    const targetWidth = req.query.w ? parseInt(req.query.w) : null;
-    if (targetWidth) {
-      try {
-        const sharp = require('sharp');
-        const resized = await sharp(data)
-          .resize({ width: targetWidth, withoutEnlargement: true })
-          .jpeg({ quality: 82 })
-          .toBuffer();
-        res.setHeader('Content-Type', 'image/jpeg');
-        res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
-        return res.send(resized);
-      } catch(e) { /* sharp not available — fall through to original */ }
+    // Always serve resized — default 1024px max, override with ?w=
+    const targetWidth = req.query.w ? parseInt(req.query.w) : 1024;
+    try {
+      const sharp = require('sharp');
+      const resized = await sharp(data)
+        .resize({ width: targetWidth, withoutEnlargement: true })
+        .jpeg({ quality: 85 })
+        .toBuffer();
+      res.setHeader('Content-Type', 'image/jpeg');
+      res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
+      res.setHeader('ETag', `"img-${id}-${targetWidth}"`);
+      if (req.headers['if-none-match'] === `"img-${id}-${targetWidth}"`) return res.status(304).end();
+      return res.send(resized);
+    } catch(e) {
+      // sharp not available — serve original
+      res.setHeader('Content-Type', mime_type);
+      res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
+      res.setHeader('ETag', `"img-${id}"`);
+      if (req.headers['if-none-match'] === `"img-${id}"`) return res.status(304).end();
+      return res.send(data);
     }
-
-    res.setHeader('Content-Type', mime_type);
-    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
-    res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
-    res.setHeader('ETag', `"img-${id}"`);
-    if (req.headers['if-none-match'] === `"img-${id}"`) return res.status(304).end();
-    res.send(data);
   } catch (err) {
     console.error('28property image serve error:', err.message);
     res.status(500).json({ error: err.message });
@@ -879,6 +879,7 @@ app.post('/28property/start', authMiddleware, async (req, res) => {
       property_url,
       agent_image_url,
       agent_name:   agent_name || '',
+      agent_prompt: agent_prompt || '',
       user_email:   req.user.email || '',
       user_name:    req.user.name  || '',
       triggered_at: new Date().toISOString()
@@ -1133,7 +1134,7 @@ app.get('/research/session/:session_id', authMiddleware, async (req, res) => {
 
 app.post('/research/topics', authMiddleware, async (req, res) => {
   try {
-    const { session_id, property } = req.body;
+    const { session_id, property, agent_name, agent_prompt } = req.body;
     if (!session_id) return res.status(400).json({ success: false, error: 'session_id required' });
 
     res.json({ success: true, session_id });
@@ -1142,6 +1143,8 @@ app.post('/research/topics', authMiddleware, async (req, res) => {
       action:       'get_topics',
       session_id,
       property,
+      agent_name:   agent_name || '',
+      agent_prompt: agent_prompt || '',
       callback_url: `${API_BASE_URL}/notify/topics`,
       user_email:   req.user.email || '',
       triggered_at: new Date().toISOString()
@@ -1203,6 +1206,7 @@ app.post('/research/avatar-prompt', authMiddleware, async (req, res) => {
       session_id:   session_id || '',
       avatar_url,
       agent_name:   agent_name || '',
+      agent_prompt: agent_prompt || '',
       callback_url: `${API_BASE_URL}/notify/avatar-prompt`,
       user_email:   req.user.email || '',
       triggered_at: new Date().toISOString()
