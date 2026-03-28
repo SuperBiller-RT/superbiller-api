@@ -1265,38 +1265,44 @@ app.post('/research/image-prompt', authMiddleware, async (req, res) => {
       ? `${API_BASE_URL}/notify/regen-prompt`
       : `${API_BASE_URL}/notify/result-image`;
 
-    res.json({ success: true, session_id, action });
-
-    // Fetch full session data from DB to include in payload
-    let sessionRow = null;
+    // Fire webhook FIRST — no DB dependency
+    let property = {};
+    let topics = [];
     try {
-      const sr = await db.query(`SELECT property_data, topics_data FROM research_sessions WHERE session_id = $1`, [session_id]);
-      if (sr.rows.length) sessionRow = sr.rows[0];
-    } catch(e) {}
+      const sr = await db.query(`SELECT property_data, topics_data FROM research_sessions WHERE session_id = $1`, [session_id || '']);
+      if (sr.rows.length) {
+        const row = sr.rows[0];
+        if (row.property_data) property = typeof row.property_data === 'object' ? row.property_data : JSON.parse(row.property_data);
+        if (row.topics_data)   topics   = typeof row.topics_data   === 'object' ? row.topics_data   : JSON.parse(row.topics_data);
+      }
+    } catch(e) { console.warn('image-prompt DB fetch skipped:', e.message); }
 
     const payload = JSON.stringify({
       action,
-      session_id,
+      session_id:          session_id || '',
       property_image_url,
       avatar_url,
       prompt,
       callback_url,
-      user_email:   req.user.email || '',
-      triggered_at: new Date().toISOString(),
-      // Full data
-      property:     sessionRow && sessionRow.property_data ? JSON.parse(sessionRow.property_data) : {},
-      topics:       sessionRow && sessionRow.topics_data   ? JSON.parse(sessionRow.topics_data)   : [],
-      agent_name:   req.body.agent_name  || '',
-      agent_prompt: req.body.agent_prompt || ''
+      user_email:          req.user.email || '',
+      triggered_at:        new Date().toISOString(),
+      property,
+      topics,
+      agent_name:          agent_name  || '',
+      agent_prompt:        agent_prompt || ''
     });
+
+    console.log(`[image-prompt] Firing ${action} to webhook, payload size:`, payload.length);
 
     fetch(WEBHOOK, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: payload
     })
-    .then(async r => { const t = await r.text(); console.log(`${action} webhook:`, r.status, t); })
-    .catch(err => console.error(`${action} webhook FAILED:`, err.message));
+    .then(async r => { const t = await r.text(); console.log(`[image-prompt] ${action} webhook response:`, r.status, t.slice(0,100)); })
+    .catch(err => console.error(`[image-prompt] ${action} webhook FAILED:`, err.message));
+
+    res.json({ success: true, session_id, action });
 
   } catch (err) {
     console.error('research/image-prompt error:', err.message);
