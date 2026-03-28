@@ -1155,6 +1155,7 @@ app.post('/research/topics', authMiddleware, async (req, res) => {
     res.json({ success: true, session_id });
 
     const payload = JSON.stringify({
+      ...req.body,
       action:       'get_topics',
       session_id,
       property,
@@ -1217,7 +1218,14 @@ app.post('/research/avatar-prompt', authMiddleware, async (req, res) => {
 
     res.json({ success: true, session_id });
 
+    let avatarSessionRow = null;
+    try {
+      const asr = await db.query(`SELECT property_data, topics_data FROM research_sessions WHERE session_id = $1`, [session_id || '']);
+      if (asr.rows.length) avatarSessionRow = asr.rows[0];
+    } catch(e) {}
+
     const payload = JSON.stringify({
+      ...req.body,
       action:       'avatar_prompt',
       session_id:   session_id || '',
       avatar_url,
@@ -1225,7 +1233,9 @@ app.post('/research/avatar-prompt', authMiddleware, async (req, res) => {
       agent_prompt: agent_prompt || '',
       callback_url: `${API_BASE_URL}/notify/avatar-prompt`,
       user_email:   req.user.email || '',
-      triggered_at: new Date().toISOString()
+      triggered_at: new Date().toISOString(),
+      property:     avatarSessionRow && avatarSessionRow.property_data ? JSON.parse(avatarSessionRow.property_data) : {},
+      topics:       avatarSessionRow && avatarSessionRow.topics_data   ? JSON.parse(avatarSessionRow.topics_data)   : []
     });
 
     fetch(WEBHOOK, {
@@ -1244,7 +1254,7 @@ app.post('/research/avatar-prompt', authMiddleware, async (req, res) => {
 
 app.post('/research/image-prompt', authMiddleware, async (req, res) => {
   try {
-    const { session_id, property_image_url, avatar_url, prompt, action_type } = req.body;
+    const { session_id, property_image_url, avatar_url, prompt, action_type, agent_name, agent_prompt } = req.body;
     if (!session_id) return res.status(400).json({ success: false, error: 'session_id required' });
 
     const ALLOWED_ACTIONS = ['add_avatar', 'regen_prompt'];
@@ -1256,6 +1266,13 @@ app.post('/research/image-prompt', authMiddleware, async (req, res) => {
 
     res.json({ success: true, session_id, action });
 
+    // Fetch full session data from DB to include in payload
+    let sessionRow = null;
+    try {
+      const sr = await db.query(`SELECT property_data, topics_data FROM research_sessions WHERE session_id = $1`, [session_id]);
+      if (sr.rows.length) sessionRow = sr.rows[0];
+    } catch(e) {}
+
     const payload = JSON.stringify({
       action,
       session_id,
@@ -1264,7 +1281,12 @@ app.post('/research/image-prompt', authMiddleware, async (req, res) => {
       prompt,
       callback_url,
       user_email:   req.user.email || '',
-      triggered_at: new Date().toISOString()
+      triggered_at: new Date().toISOString(),
+      // Full data
+      property:     sessionRow && sessionRow.property_data ? JSON.parse(sessionRow.property_data) : {},
+      topics:       sessionRow && sessionRow.topics_data   ? JSON.parse(sessionRow.topics_data)   : [],
+      agent_name:   req.body.agent_name  || '',
+      agent_prompt: req.body.agent_prompt || ''
     });
 
     fetch(WEBHOOK, {
@@ -1677,6 +1699,7 @@ app.post('/28property/regen-line', authMiddleware, async (req, res) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        ...req.body,
         action:       'regen_line',
         lang:          lang || 'EN',
         scene_number,
