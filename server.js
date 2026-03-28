@@ -98,6 +98,20 @@ async function setupDB() {
   // Non-destructive migration — add avatar_prompt if not exists
   await db.query(`ALTER TABLE property_agent_images ADD COLUMN IF NOT EXISTS avatar_prompt TEXT`).catch(() => {});
 
+  // Billing table
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS api_billing (
+      id            SERIAL PRIMARY KEY,
+      user_email    VARCHAR(255),
+      label         TEXT,
+      cost          NUMERIC(10,4),
+      session_id    VARCHAR(255),
+      image_url     TEXT,
+      agent_name    VARCHAR(255),
+      created_at    TIMESTAMPTZ DEFAULT NOW()
+    )
+  `).catch(() => {});
+
   // FIX 2: Added property_data and topics_data JSONB columns
   // These store the full payload so the frontend can recover missed SSE events
   await db.query(`
@@ -1867,5 +1881,49 @@ Rewrite the body only:`;
 });
 
 // ══════════════════════════════════════════════════════════
+// ── BILLING ──────────────────────────────────────────────────────────────────
+app.post('/billing/add', authMiddleware, async (req, res) => {
+  try {
+    const { label, cost, session_id, image_url, agent_name } = req.body;
+    if (!cost) return res.status(400).json({ success: false, error: 'cost required' });
+    await db.query(
+      `INSERT INTO api_billing (user_email, label, cost, session_id, image_url, agent_name)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [req.user.email || '', label || '', parseFloat(cost), session_id || '', image_url || '', agent_name || '']
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('billing/add error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/billing/session/:session_id', authMiddleware, async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT * FROM api_billing WHERE session_id = $1 ORDER BY created_at ASC`,
+      [req.params.session_id]
+    );
+    const total = result.rows.reduce((s, r) => s + parseFloat(r.cost), 0);
+    res.json({ success: true, entries: result.rows, total: total.toFixed(4) });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/billing/history', authMiddleware, async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT * FROM api_billing WHERE user_email = $1 ORDER BY created_at DESC LIMIT 100`,
+      [req.user.email || '']
+    );
+    const total = result.rows.reduce((s, r) => s + parseFloat(r.cost), 0);
+    res.json({ success: true, entries: result.rows, total: total.toFixed(4) });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
