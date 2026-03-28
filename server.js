@@ -1195,7 +1195,7 @@ app.post('/notify/topics', async (req, res) => {
 // ── AVATAR PROMPT — fires n8n webhook to analyse avatar + generate agent intro ──
 app.post('/research/avatar-prompt', authMiddleware, async (req, res) => {
   try {
-    const { avatar_url, agent_name, session_id } = req.body;
+    const { avatar_url, agent_name, session_id, agent_prompt } = req.body;
     if (!avatar_url)
       return res.status(400).json({ success: false, error: 'avatar_url required' });
 
