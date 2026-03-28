@@ -48,6 +48,33 @@ const AIRTABLE_PAT      = process.env.AIRTABLE_PAT;
 const API_BASE_URL      = process.env.API_BASE_URL || 'https://superbiller-api-production.up.railway.app';
 const WEBHOOK           = 'https://primary-production-ab4a6.up.railway.app/webhook/28property';
 
+// ── IMAGE JOB STORE — tracks in-flight image-prompt jobs ─────────────────────
+// key: session_id + ':' + property_image_url → { property_image_url, action, ts }
+const _imageJobs = new Map();
+function _storeImageJob(session_id, property_image_url, action) {
+  const key = (session_id || '') + ':' + property_image_url;
+  _imageJobs.set(key, { property_image_url, action, ts: Date.now() });
+  // Clean up jobs older than 30 minutes
+  const cutoff = Date.now() - 30 * 60 * 1000;
+  for (const [k, v] of _imageJobs) { if (v.ts < cutoff) _imageJobs.delete(k); }
+}
+function _findImageJob(session_id) {
+  // Find most recent job for this session
+  let best = null;
+  for (const [k, v] of _imageJobs) {
+    if (k.startsWith((session_id || '') + ':')) {
+      if (!best || v.ts > best.ts) best = v;
+    }
+  }
+  return best;
+}
+function _findImageJobByUrl(property_image_url) {
+  for (const [k, v] of _imageJobs) {
+    if (v.property_image_url === property_image_url) return v;
+  }
+  return null;
+}
+
 // ── SETUP DB ──────────────────────────────────────────────
 async function setupDB() {
   await db.query(`
@@ -1292,7 +1319,9 @@ app.post('/research/image-prompt', authMiddleware, async (req, res) => {
       agent_prompt:        agent_prompt || ''
     });
 
-    console.log(`[image-prompt] Firing ${action} to webhook, payload size:`, payload.length);
+    // Store job so callback can inject property_image_url
+    _storeImageJob(session_id, property_image_url, action);
+    console.log(`[image-prompt] Firing ${action} for image: ${property_image_url}`);
 
     fetch(WEBHOOK, {
       method: 'POST',
@@ -1330,10 +1359,16 @@ app.post('/notify/regen-prompt', async (req, res) => {
     if (!session_id || !prompt)
       return res.status(400).json({ success: false, error: 'session_id and prompt required' });
 
-    const payload = JSON.stringify({ type: 'regen_prompt', session_id, prompt });
-    // FIX 1: use sseWrite which calls flush()
+    // Inject property_image_url from job store so frontend matches to correct image
+    const job = _findImageJob(session_id);
+    const property_image_url = req.body.property_image_url || (job ? job.property_image_url : '');
+    if (job) _imageJobs.delete((session_id || '') + ':' + job.property_image_url);
+
+    const payload = JSON.stringify({ ...req.body, type: 'regen_prompt', session_id, prompt, property_image_url });
     sseBroadcast(payload);
-    var total = 0; clients.forEach(function(s){ total += s.size; }); res.json({ success: true, notified: total });
+    var total = 0; clients.forEach(function(s){ total += s.size; });
+    console.log(`[regen-prompt] SSE broadcast — image: ${property_image_url}`);
+    res.json({ success: true, notified: total, property_image_url });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -1345,10 +1380,16 @@ app.post('/notify/result-image', async (req, res) => {
     if (!session_id || !image_url)
       return res.status(400).json({ success: false, error: 'session_id and image_url required' });
 
-    const payload = JSON.stringify({ ...req.body, type: 'result_image', session_id, image_url });
-    // FIX 1: use sseWrite which calls flush()
+    // Inject property_image_url from job store so frontend can match to correct image
+    const job = _findImageJob(session_id);
+    const property_image_url = req.body.property_image_url || (job ? job.property_image_url : '');
+    if (job) _imageJobs.delete((session_id || '') + ':' + job.property_image_url); // clean up
+
+    const payload = JSON.stringify({ ...req.body, type: 'result_image', session_id, image_url, property_image_url });
     sseBroadcast(payload);
-    var total = 0; clients.forEach(function(s){ total += s.size; }); res.json({ success: true, notified: total });
+    var total = 0; clients.forEach(function(s){ total += s.size; });
+    console.log(`[result-image] SSE broadcast — image: ${property_image_url} → result: ${image_url}`);
+    res.json({ success: true, notified: total, property_image_url });
   } catch (err) {
     console.error('notify/result-image error:', err.message);
     res.status(500).json({ success: false, error: err.message });
