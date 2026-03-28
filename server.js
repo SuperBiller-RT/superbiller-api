@@ -159,15 +159,24 @@ async function atFetch(path, opts = {}) {
 // FIX 1: Always call res.flush() after writing to SSE stream
 function sseWrite(clientRes, payload) {
   try {
-    clientRes.write(`data: ${payload}\n\n`);
+    const ok = clientRes.write(`data: ${payload}\n\n`);
     if (clientRes.flush) clientRes.flush();
-  } catch(e) { /* connection already closed */ }
+    return ok !== false;
+  } catch(e) {
+    return false; // dead connection
+  }
 }
 
-// Broadcast to ALL connected clients across ALL users
+// Broadcast to ALL connected clients — removes dead connections
 function sseBroadcast(payload) {
-  clients.forEach(function(conns) {
-    conns.forEach(function(res) { sseWrite(res, payload); });
+  clients.forEach(function(conns, userId) {
+    const dead = [];
+    conns.forEach(function(res) {
+      const ok = sseWrite(res, payload);
+      if (!ok) dead.push(res);
+    });
+    dead.forEach(function(res) { conns.delete(res); });
+    if (conns.size === 0) clients.delete(userId);
   });
 }
 
@@ -342,7 +351,7 @@ app.get('/events', (req, res) => {
   const ping = setInterval(() => {
     res.write(':\n\n');
     if (res.flush) res.flush();
-  }, 25000);
+  }, 15000);
 
   req.on('close', () => {
     clearInterval(ping);
