@@ -945,7 +945,7 @@ app.get('/28property/avatar/:id/prompt', async (req, res) => {
 });
 
 // Save avatar prompt permanently to agent record
-app.patch('/28property/avatar/:id/prompt', authMiddleware, async (req, res) => {
+app.patch('/28property/avatar/:id/prompt', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const { avatar_prompt } = req.body;
