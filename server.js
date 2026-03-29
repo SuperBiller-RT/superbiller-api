@@ -1922,9 +1922,10 @@ app.get('/session/list', authMiddleware, async (req, res) => {
     const { funnel } = req.query;
     const result = await db.query(`
       SELECT ns.id, ns.session_id, ns.title, ns.property_url, ns.agent_name, ns.created_at, ns.updated_at,
-             COALESCE(SUM(b.cost), 0) as billing_total
+             COALESCE(SUM(b.cost), 0) as billing_total,
+             COUNT(b.id) as billing_count
       FROM named_sessions ns
-      LEFT JOIN api_billing b ON b.session_id = ns.session_id
+      LEFT JOIN api_billing b ON b.session_id = ns.session_id AND b.user_email = ns.user_email
       WHERE ns.user_email = $1 ${funnel ? 'AND ns.funnel = $2' : ''}
       GROUP BY ns.id, ns.session_id, ns.title, ns.property_url, ns.agent_name, ns.created_at, ns.updated_at
       ORDER BY ns.updated_at DESC
@@ -1972,6 +1973,21 @@ app.post('/billing/add', authMiddleware, async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     console.error('billing/add error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/billing/session-detail/:session_id', authMiddleware, async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT label, cost, image_url, agent_name, created_at FROM api_billing
+       WHERE session_id = $1 AND user_email = $2
+       ORDER BY created_at ASC`,
+      [req.params.session_id, req.user.email]
+    );
+    const total = result.rows.reduce((s, r) => s + parseFloat(r.cost), 0);
+    res.json({ success: true, entries: result.rows, total: total.toFixed(4), count: result.rows.length });
+  } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
