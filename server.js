@@ -1701,20 +1701,16 @@ app.delete('/session/clear', authMiddleware, async (req, res) => {
       [req.user.email, funnel]
     );
 
-    // Delete from named sessions (session list on home page)
-    // api_billing is NEVER touched — personal usage history is always preserved
+    // Delete from named sessions ONLY if specific session_id provided (Clear Session button)
+    // New Listing passes no session_id — named sessions are preserved so Home list stays intact
+    // api_billing is NEVER touched
     if (session_id) {
       await db.query(
         'DELETE FROM named_sessions WHERE user_email = $1 AND session_id = $2',
         [req.user.email, session_id]
       );
-    } else {
-      // No specific session_id — delete all named sessions for this funnel
-      await db.query(
-        'DELETE FROM named_sessions WHERE user_email = $1 AND funnel = $2',
-        [req.user.email, funnel]
-      );
     }
+    // If no session_id — only user_sessions (current state) was cleared above. Named sessions untouched.
 
     console.log(`[session/clear] Cleared session for ${req.user.email} — billing untouched`);
     res.json({ success: true });
