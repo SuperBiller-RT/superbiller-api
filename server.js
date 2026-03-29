@@ -1691,14 +1691,32 @@ app.get('/session/load', authMiddleware, async (req, res) => {
 // Clear session — delete by user_email + funnel
 app.delete('/session/clear', authMiddleware, async (req, res) => {
   try {
-    const { funnel } = req.body;
+    const { funnel, session_id } = req.body;
     if (!funnel)
       return res.status(400).json({ success: false, error: 'funnel required' });
 
+    // Delete current session state
     await db.query(
       'DELETE FROM user_sessions WHERE user_email = $1 AND funnel = $2',
       [req.user.email, funnel]
     );
+
+    // Delete from named sessions (session list on home page)
+    // api_billing is NEVER touched — personal usage history is always preserved
+    if (session_id) {
+      await db.query(
+        'DELETE FROM named_sessions WHERE user_email = $1 AND session_id = $2',
+        [req.user.email, session_id]
+      );
+    } else {
+      // No specific session_id — delete all named sessions for this funnel
+      await db.query(
+        'DELETE FROM named_sessions WHERE user_email = $1 AND funnel = $2',
+        [req.user.email, funnel]
+      );
+    }
+
+    console.log(`[session/clear] Cleared session for ${req.user.email} — billing untouched`);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
