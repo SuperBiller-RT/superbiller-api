@@ -458,6 +458,7 @@ app.get('/airtable/scenes/single', authMiddleware, async (req, res) => {
         video_EN:       f.video_EN       || null,
         full_audio_EN:  f.full_audio_EN  || null,
         full_audio_TH:  f.full_audio_TH  || null,
+        full_video:     f.full_video     || null,
         full_script_EN: f.full_script_EN || null,
         full_script_TH: f.full_script_TH || null,
       }
@@ -481,7 +482,7 @@ app.get('/airtable/scenes', authMiddleware, async (req, res) => {
       'full_script_EN', 'full_script_TH',
       'image_prompt', 'negative_prompt',
       'Generate', 'image', 'status', 'task',
-      'audio_EN', 'audio_TH', 'video_EN', 'full_audio_EN', 'full_audio_TH',
+      'audio_EN', 'audio_TH', 'video_EN', 'full_audio_EN', 'full_audio_TH', 'full_video',
       'voice_id'
     ];
     const fieldParams = fields.map(f => `fields[]=${encodeURIComponent(f)}`).join('&');
@@ -518,7 +519,7 @@ app.post('/airtable/scene/update', authMiddleware, async (req, res) => {
       'full_script_EN', 'full_script_TH',
       'Generate', 'status', 'task',
       'scene_number', 'scene_type', 'pacing', 'estimated_duration_secs',
-      'image', 'audio_EN', 'audio_TH', 'video_EN', 'full_audio_EN', 'full_audio_TH',
+      'image', 'audio_EN', 'audio_TH', 'video_EN', 'full_audio_EN', 'full_audio_TH', 'full_video',
       'voice_id'
     ];
 
@@ -551,7 +552,7 @@ app.post('/airtable/scenes/batch-update', authMiddleware, async (req, res) => {
       'image_prompt', 'negative_prompt', 'voiceover_sync_EN', 'voiceover_sync_TH',
       'full_script_EN', 'full_script_TH',
       'Generate', 'status', 'task',
-      'avatar_name', 'voice_id'
+      'avatar_name', 'voice_id', 'full_video'
     ];
 
     const records = updates.map(u => ({
