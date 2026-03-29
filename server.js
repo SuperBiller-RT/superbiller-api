@@ -1925,7 +1925,7 @@ app.get('/session/list', authMiddleware, async (req, res) => {
              COALESCE(SUM(b.cost), 0) as billing_total,
              COUNT(b.id) as billing_count
       FROM named_sessions ns
-      LEFT JOIN api_billing b ON b.session_id = ns.session_id AND b.user_email = ns.user_email
+      LEFT JOIN api_billing b ON b.session_id = ns.session_id AND b.user_email = ns.user_email AND b.session_id != ''
       WHERE ns.user_email = $1 ${funnel ? 'AND ns.funnel = $2' : ''}
       GROUP BY ns.id, ns.session_id, ns.title, ns.property_url, ns.agent_name, ns.created_at, ns.updated_at
       ORDER BY ns.updated_at DESC
