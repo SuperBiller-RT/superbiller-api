@@ -98,6 +98,24 @@ async function setupDB() {
   // Non-destructive migration — add avatar_prompt if not exists
   await db.query(`ALTER TABLE property_agent_images ADD COLUMN IF NOT EXISTS avatar_prompt TEXT`).catch(() => {});
 
+  // Named sessions table — multiple sessions per user per funnel
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS named_sessions (
+      id            SERIAL PRIMARY KEY,
+      user_email    VARCHAR(255),
+      funnel        VARCHAR(100),
+      session_id    VARCHAR(255),
+      title         TEXT,
+      property_url  TEXT,
+      agent_name    VARCHAR(255),
+      session_data  JSONB,
+      created_at    TIMESTAMPTZ DEFAULT NOW(),
+      updated_at    TIMESTAMPTZ DEFAULT NOW()
+    )
+  `).catch(() => {});
+  await db.query(`CREATE INDEX IF NOT EXISTS idx_named_sessions_user ON named_sessions(user_email, funnel)`).catch(() => {});
+  await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_named_sessions_sid ON named_sessions(session_id)`).catch(() => {});
+
   // Billing table
   await db.query(`
     CREATE TABLE IF NOT EXISTS api_billing (
@@ -1881,6 +1899,66 @@ Rewrite the body only:`;
 });
 
 // ══════════════════════════════════════════════════════════
+// ── NAMED SESSIONS ───────────────────────────────────────────────────────────
+app.post('/session/save-named', authMiddleware, async (req, res) => {
+  try {
+    const { funnel, session_id, title, property_url, agent_name, session_data } = req.body;
+    if (!funnel || !session_id) return res.status(400).json({ success: false, error: 'funnel and session_id required' });
+    await db.query(`
+      INSERT INTO named_sessions (user_email, funnel, session_id, title, property_url, agent_name, session_data, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+      ON CONFLICT (session_id)
+      DO UPDATE SET title=EXCLUDED.title, property_url=EXCLUDED.property_url, agent_name=EXCLUDED.agent_name, session_data=EXCLUDED.session_data, updated_at=NOW()
+    `, [req.user.email, funnel, session_id, title||'', property_url||'', agent_name||'', JSON.stringify(session_data||{})]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('session/save-named error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/session/list', authMiddleware, async (req, res) => {
+  try {
+    const { funnel } = req.query;
+    const result = await db.query(`
+      SELECT ns.id, ns.session_id, ns.title, ns.property_url, ns.agent_name, ns.created_at, ns.updated_at,
+             COALESCE(SUM(b.cost), 0) as billing_total
+      FROM named_sessions ns
+      LEFT JOIN api_billing b ON b.session_id = ns.session_id
+      WHERE ns.user_email = $1 ${funnel ? 'AND ns.funnel = $2' : ''}
+      GROUP BY ns.id, ns.session_id, ns.title, ns.property_url, ns.agent_name, ns.created_at, ns.updated_at
+      ORDER BY ns.updated_at DESC
+      LIMIT 20
+    `, funnel ? [req.user.email, funnel] : [req.user.email]);
+    res.json({ success: true, sessions: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/session/load-named/:session_id', authMiddleware, async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT * FROM named_sessions WHERE session_id = $1 AND user_email = $2`,
+      [req.params.session_id, req.user.email]
+    );
+    if (!result.rows.length) return res.status(404).json({ success: false, error: 'Session not found' });
+    res.json({ success: true, session: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.delete('/session/delete-named/:session_id', authMiddleware, async (req, res) => {
+  try {
+    await db.query(`DELETE FROM named_sessions WHERE session_id = $1 AND user_email = $2`,
+      [req.params.session_id, req.user.email]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ── BILLING ──────────────────────────────────────────────────────────────────
 app.post('/billing/add', authMiddleware, async (req, res) => {
   try {
