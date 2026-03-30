@@ -340,7 +340,6 @@ app.post('/airtable/video', authMiddleware, async (req, res) => {
   }
 });
 
-// Single n8n_video record — used by frontend to refresh job cost
 app.get('/airtable/job', authMiddleware, async (req, res) => {
   try {
     const { record_id } = req.query;
@@ -2040,61 +2039,6 @@ app.get('/billing/history', authMiddleware, async (req, res) => {
     const total = result.rows.reduce((s, r) => s + parseFloat(r.cost), 0);
     res.json({ success: true, entries: result.rows, total: total.toFixed(4) });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-
-// ── Refund last billing entry for a task that failed ─────────────────────
-// Deletes the most recent charge matching session_id + label for this user
-app.post('/billing/refund', authMiddleware, async (req, res) => {
-  try {
-    const { session_id, label } = req.body;
-    if (!session_id || !label)
-      return res.status(400).json({ success: false, error: 'session_id and label required' });
-
-    // Delete the single most recent matching entry for this user
-    const result = await db.query(
-      `DELETE FROM api_billing
-       WHERE id = (
-         SELECT id FROM api_billing
-         WHERE user_email = $1 AND session_id = $2 AND label = $3
-         ORDER BY created_at DESC
-         LIMIT 1
-       )
-       RETURNING id, label, cost`,
-      [req.user.email || '', session_id, label]
-    );
-
-    if (result.rows.length === 0)
-      return res.json({ success: false, error: 'No matching charge found to refund' });
-
-    const refunded = result.rows[0];
-    console.log(`[billing/refund] Refunded $${refunded.cost} — label: ${refunded.label} — user: ${req.user.email}`);
-    res.json({ success: true, refunded: { label: refunded.label, cost: refunded.cost } });
-  } catch (err) {
-    console.error('billing/refund error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-
-// ── n8n job complete → broadcast SSE ──────────────────────────────────────
-app.post('/notify/job-complete', async (req, res) => {
-  try {
-    const { job_id, execution_id, status } = req.body;
-    const payload = JSON.stringify({
-      type: 'job_complete',
-      job_id: job_id || '',
-      execution_id: execution_id || '',
-      status: status || 'Completed'
-    });
-    sseBroadcast(payload);
-    var total = 0; clients.forEach(function(s){ total += s.size; });
-    console.log(`[job-complete] Broadcast to ${total} clients — job: ${job_id}, status: ${status}`);
-    res.json({ success: true, notified: total });
-  } catch (err) {
-    console.error('[job-complete] error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
