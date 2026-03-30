@@ -340,6 +340,18 @@ app.post('/airtable/video', authMiddleware, async (req, res) => {
   }
 });
 
+// Single n8n_video record — used by frontend to refresh job cost
+app.get('/airtable/job', authMiddleware, async (req, res) => {
+  try {
+    const { record_id } = req.query;
+    if (!record_id) return res.status(400).json({ success: false, error: 'record_id required' });
+    const data = await atFetch(`/${AIRTABLE_TABLE}/${record_id}`);
+    res.json({ success: true, record: data });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.get('/airtable/videos', authMiddleware, async (req, res) => {
   try {
     const data = await atFetch(`/${AIRTABLE_TABLE}?maxRecords=100&sort[0][field]=created_at&sort[0][direction]=desc`);
@@ -2032,6 +2044,26 @@ app.get('/billing/history', authMiddleware, async (req, res) => {
   }
 });
 
+
+// ── n8n job complete → broadcast SSE ──────────────────────────────────────
+app.post('/notify/job-complete', async (req, res) => {
+  try {
+    const { job_id, execution_id, status } = req.body;
+    const payload = JSON.stringify({
+      type: 'job_complete',
+      job_id: job_id || '',
+      execution_id: execution_id || '',
+      status: status || 'Completed'
+    });
+    sseBroadcast(payload);
+    var total = 0; clients.forEach(function(s){ total += s.size; });
+    console.log(`[job-complete] Broadcast to ${total} clients — job: ${job_id}, status: ${status}`);
+    res.json({ success: true, notified: total });
+  } catch (err) {
+    console.error('[job-complete] error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
