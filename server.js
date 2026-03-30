@@ -265,7 +265,7 @@ app.post('/auth/register', async (req, res) => {
       [name, email, hash, assignedRole]
     );
     const user = result.rows[0];
-    const token = jwt.sign({ id: user.id, email: user.email, name: user.name, role: user.role }, JWT_SECRET, { expiresIn: '8h' });
+    const token = jwt.sign({ id: user.id, email: user.email, name: user.name, role: user.role }, JWT_SECRET, { expiresIn: '100y' });
     res.json({ success: true, token, name: user.name, email: user.email, role: user.role });
   } catch (err) {
     console.error('Register error:', err.message);
@@ -285,7 +285,7 @@ app.post('/auth/login', async (req, res) => {
     const match = await bcrypt.compare(password, user.password_hash);
     if (!match)
       return res.json({ success: false, message: 'Invalid email or password' });
-    const token = jwt.sign({ id: user.id, email: user.email, name: user.name, role: user.role }, JWT_SECRET, { expiresIn: '8h' });
+    const token = jwt.sign({ id: user.id, email: user.email, name: user.name, role: user.role }, JWT_SECRET, { expiresIn: '100y' });
     res.json({ success: true, token, name: user.name, email: user.email, role: user.role });
   } catch (err) {
     console.error('Login error:', err.message);
@@ -334,18 +334,6 @@ app.post('/airtable/video', authMiddleware, async (req, res) => {
         ...(notes ? { 'notes': notes } : {})
       }})
     });
-    res.json({ success: true, record: data });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// Single n8n_video record by record_id — used by frontend to refresh job cost
-app.get('/airtable/job', authMiddleware, async (req, res) => {
-  try {
-    const { record_id } = req.query;
-    if (!record_id) return res.status(400).json({ success: false, error: 'record_id required' });
-    const data = await atFetch(`/${AIRTABLE_TABLE}/${record_id}`);
     res.json({ success: true, record: data });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
