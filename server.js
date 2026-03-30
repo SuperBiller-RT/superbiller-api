@@ -340,6 +340,18 @@ app.post('/airtable/video', authMiddleware, async (req, res) => {
   }
 });
 
+// Single n8n_video record by record_id — used by frontend to refresh job cost
+app.get('/airtable/job', authMiddleware, async (req, res) => {
+  try {
+    const { record_id } = req.query;
+    if (!record_id) return res.status(400).json({ success: false, error: 'record_id required' });
+    const data = await atFetch(`/${AIRTABLE_TABLE}/${record_id}`);
+    res.json({ success: true, record: data });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.get('/airtable/videos', authMiddleware, async (req, res) => {
   try {
     const data = await atFetch(`/${AIRTABLE_TABLE}?maxRecords=100&sort[0][field]=created_at&sort[0][direction]=desc`);
@@ -2028,31 +2040,6 @@ app.get('/billing/history', authMiddleware, async (req, res) => {
     const total = result.rows.reduce((s, r) => s + parseFloat(r.cost), 0);
     res.json({ success: true, entries: result.rows, total: total.toFixed(4) });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-
-// ── Job complete notification from n8n → broadcast via SSE ───────────────────
-// n8n calls this when the 28property pipeline finishes.
-// Body: { type, job_id, execution_id, status }
-// Frontend SSE handler listens for type === 'job_complete' to update UI instantly.
-// Polling on the frontend is the reliable fallback — this is the speed boost.
-app.post('/notify/job-complete', async (req, res) => {
-  try {
-    const { job_id, execution_id, status } = req.body;
-    const payload = JSON.stringify({
-      type: 'job_complete',
-      job_id: job_id || '',
-      execution_id: execution_id || '',
-      status: status || 'Completed'
-    });
-    sseBroadcast(payload);
-    var total = 0; clients.forEach(function(s){ total += s.size; });
-    console.log(`[job-complete] Broadcast to ${total} clients — job: ${job_id}, status: ${status}`);
-    res.json({ success: true, notified: total });
-  } catch (err) {
-    console.error('[job-complete] error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
