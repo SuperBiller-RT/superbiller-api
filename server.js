@@ -458,7 +458,6 @@ app.get('/airtable/scenes/single', authMiddleware, async (req, res) => {
         video_EN:       f.video_EN       || null,
         full_audio_EN:  f.full_audio_EN  || null,
         full_audio_TH:  f.full_audio_TH  || null,
-        full_video:     f.full_video     || null,
         full_script_EN: f.full_script_EN || null,
         full_script_TH: f.full_script_TH || null,
       }
@@ -482,7 +481,7 @@ app.get('/airtable/scenes', authMiddleware, async (req, res) => {
       'full_script_EN', 'full_script_TH',
       'image_prompt', 'negative_prompt',
       'Generate', 'image', 'status', 'task',
-      'audio_EN', 'audio_TH', 'video_EN', 'full_audio_EN', 'full_audio_TH', 'full_video',
+      'audio_EN', 'audio_TH', 'video_EN', 'full_audio_EN', 'full_audio_TH',
       'voice_id'
     ];
     const fieldParams = fields.map(f => `fields[]=${encodeURIComponent(f)}`).join('&');
@@ -519,7 +518,7 @@ app.post('/airtable/scene/update', authMiddleware, async (req, res) => {
       'full_script_EN', 'full_script_TH',
       'Generate', 'status', 'task',
       'scene_number', 'scene_type', 'pacing', 'estimated_duration_secs',
-      'image', 'audio_EN', 'audio_TH', 'video_EN', 'full_audio_EN', 'full_audio_TH', 'full_video',
+      'image', 'audio_EN', 'audio_TH', 'video_EN', 'full_audio_EN', 'full_audio_TH',
       'voice_id'
     ];
 
@@ -552,7 +551,7 @@ app.post('/airtable/scenes/batch-update', authMiddleware, async (req, res) => {
       'image_prompt', 'negative_prompt', 'voiceover_sync_EN', 'voiceover_sync_TH',
       'full_script_EN', 'full_script_TH',
       'Generate', 'status', 'task',
-      'avatar_name', 'voice_id', 'full_video'
+      'avatar_name', 'voice_id'
     ];
 
     const records = updates.map(u => ({
@@ -2029,6 +2028,31 @@ app.get('/billing/history', authMiddleware, async (req, res) => {
     const total = result.rows.reduce((s, r) => s + parseFloat(r.cost), 0);
     res.json({ success: true, entries: result.rows, total: total.toFixed(4) });
   } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+
+// ── Job complete notification from n8n → broadcast via SSE ───────────────────
+// n8n calls this when the 28property pipeline finishes.
+// Body: { type, job_id, execution_id, status }
+// Frontend SSE handler listens for type === 'job_complete' to update UI instantly.
+// Polling on the frontend is the reliable fallback — this is the speed boost.
+app.post('/notify/job-complete', async (req, res) => {
+  try {
+    const { job_id, execution_id, status } = req.body;
+    const payload = JSON.stringify({
+      type: 'job_complete',
+      job_id: job_id || '',
+      execution_id: execution_id || '',
+      status: status || 'Completed'
+    });
+    sseBroadcast(payload);
+    var total = 0; clients.forEach(function(s){ total += s.size; });
+    console.log(`[job-complete] Broadcast to ${total} clients — job: ${job_id}, status: ${status}`);
+    res.json({ success: true, notified: total });
+  } catch (err) {
+    console.error('[job-complete] error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
