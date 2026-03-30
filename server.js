@@ -2045,6 +2045,40 @@ app.get('/billing/history', authMiddleware, async (req, res) => {
 });
 
 
+// ── Refund last billing entry for a task that failed ─────────────────────
+// Deletes the most recent charge matching session_id + label for this user
+app.post('/billing/refund', authMiddleware, async (req, res) => {
+  try {
+    const { session_id, label } = req.body;
+    if (!session_id || !label)
+      return res.status(400).json({ success: false, error: 'session_id and label required' });
+
+    // Delete the single most recent matching entry for this user
+    const result = await db.query(
+      `DELETE FROM api_billing
+       WHERE id = (
+         SELECT id FROM api_billing
+         WHERE user_email = $1 AND session_id = $2 AND label = $3
+         ORDER BY created_at DESC
+         LIMIT 1
+       )
+       RETURNING id, label, cost`,
+      [req.user.email || '', session_id, label]
+    );
+
+    if (result.rows.length === 0)
+      return res.json({ success: false, error: 'No matching charge found to refund' });
+
+    const refunded = result.rows[0];
+    console.log(`[billing/refund] Refunded $${refunded.cost} — label: ${refunded.label} — user: ${req.user.email}`);
+    res.json({ success: true, refunded: { label: refunded.label, cost: refunded.cost } });
+  } catch (err) {
+    console.error('billing/refund error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+
 // ── n8n job complete → broadcast SSE ──────────────────────────────────────
 app.post('/notify/job-complete', async (req, res) => {
   try {
@@ -2064,6 +2098,7 @@ app.post('/notify/job-complete', async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
 
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
