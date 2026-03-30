@@ -432,6 +432,64 @@ app.get('/events', (req, res) => {
 });
 
 // ── NOTIFY SCENE — called by n8n when scene status changes ─
+
+// ── Full audio complete — propagate URL to all scenes in Airtable ─────────
+// n8n calls this after writing full_audio_EN or full_audio_TH to one scene.
+// Server finds the URL, batch-updates ALL scenes for that job, then SSE fires.
+app.post('/notify/full-audio', async (req, res) => {
+  try {
+    const { record_id, task, execution_id } = req.body;
+    if (!record_id || !task)
+      return res.status(400).json({ success: false, error: 'record_id and task required' });
+
+    const col = task === 'full_audio_EN' ? 'full_audio_EN'
+              : task === 'full_audio_TH' ? 'full_audio_TH'
+              : null;
+    if (!col) return res.status(400).json({ success: false, error: 'task must be full_audio_EN or full_audio_TH' });
+
+    // 1. Fetch the source scene to get the audio URL
+    const srcScene = await atFetch(`/${AIRTABLE_SCENES}/${record_id}`);
+    const audioUrl = srcScene.fields && srcScene.fields[col];
+    if (!audioUrl) return res.status(400).json({ success: false, error: 'No audio URL found on source scene' });
+
+    // 2. Fetch all scenes for this job via n8n_video link
+    // Scenes are linked to n8n_video via job_id field — filter by it
+    const jobId = srcScene.fields && srcScene.fields.job_id;
+    if (!jobId) return res.status(400).json({ success: false, error: 'No job_id on source scene' });
+
+    const scenesData = await atFetch(`/${AIRTABLE_SCENES}?filterByFormula=${encodeURIComponent(`{job_id}='${jobId}'`)}&maxRecords=100`);
+    const allScenes = (scenesData.records || []);
+    if (!allScenes.length) return res.status(400).json({ success: false, error: 'No scenes found for job' });
+
+    // 3. Batch-update all scenes with the audio URL (Airtable allows 10 per request)
+    const records = allScenes.map(s => ({ id: s.id, fields: { [col]: audioUrl } }));
+    const chunks = [];
+    for (let i = 0; i < records.length; i += 10) chunks.push(records.slice(i, i + 10));
+    for (const chunk of chunks) {
+      await atFetch(`/${AIRTABLE_SCENES}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ records: chunk })
+      });
+    }
+    console.log(`[full-audio] Stamped ${col} on ${records.length} scenes for job ${jobId}`);
+
+    // 4. Broadcast SSE so frontend refreshes
+    const payload = JSON.stringify({
+      type:         'scene_complete',
+      record_id:    record_id,
+      status:       'Complete',
+      task:         task,
+      execution_id: execution_id || ''
+    });
+    sseBroadcast(payload);
+
+    res.json({ success: true, updated: records.length, url: audioUrl });
+  } catch (err) {
+    console.error('[full-audio] error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.post('/notify/scene', async (req, res) => {
   try {
     const { record_id, status, task } = req.body;
@@ -562,7 +620,8 @@ app.post('/airtable/scenes/batch-update', authMiddleware, async (req, res) => {
       'image_prompt', 'negative_prompt', 'voiceover_sync_EN', 'voiceover_sync_TH',
       'full_script_EN', 'full_script_TH',
       'Generate', 'status', 'task',
-      'avatar_name', 'voice_id'
+      'avatar_name', 'voice_id',
+      'full_audio_EN', 'full_audio_TH'
     ];
 
     const records = updates.map(u => ({
