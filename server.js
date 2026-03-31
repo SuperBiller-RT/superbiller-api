@@ -951,59 +951,6 @@ app.post('/28property/upload', authMiddleware, async (req, res) => {
   }
 });
 
-// ── INTERNAL — n8n image upload (no auth required) ───────────────────────────
-app.post('/internal/upload-image', async (req, res) => {
-  try {
-    const body = req.rawBody;
-    if (!body) return res.status(400).json({ success: false, error: 'No body received' });
-
-    const contentType = req.headers['content-type'] || '';
-    const boundaryMatch = contentType.match(/boundary=(.+)$/);
-    if (!boundaryMatch) return res.status(400).json({ success: false, error: 'No boundary in content-type' });
-    const boundary = boundaryMatch[1].trim();
-
-    const parts = body.toString('binary').split('--' + boundary);
-    let fileBuffer = null, fileName = 'scene-image', mimeType = 'image/jpeg', agentName = '';
-
-    for (const part of parts) {
-      if (!part.includes('Content-Disposition')) continue;
-      const nameMatch     = part.match(/name="([^"]+)"/);
-      const filenameMatch = part.match(/filename="([^"]+)"/);
-      const ctMatch       = part.match(/Content-Type: ([^\r\n]+)/);
-      const name          = nameMatch ? nameMatch[1] : '';
-      const headerEnd     = part.indexOf('\r\n\r\n');
-      if (headerEnd === -1) continue;
-      const value = part.slice(headerEnd + 4, part.lastIndexOf('\r\n'));
-
-      if (name === 'agent_name') { agentName = value.trim(); }
-      else if (filenameMatch) {
-        fileName   = filenameMatch[1];
-        mimeType   = ctMatch ? ctMatch[1].trim() : 'image/jpeg';
-        fileBuffer = Buffer.from(value, 'binary');
-      }
-    }
-
-    if (!fileBuffer) return res.status(400).json({ success: false, error: 'No image file received' });
-
-    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
-    if (!allowedTypes.includes(mimeType))
-      return res.status(400).json({ success: false, error: 'Only JPG, PNG or WebP images allowed' });
-
-    const result = await db.query(
-      `INSERT INTO property_agent_images (filename, mime_type, data, agent_name, user_email)
-       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-      [fileName, mimeType, fileBuffer, agentName || 'n8n', 'n8n@internal']
-    );
-
-    const imageId  = result.rows[0].id;
-    const imageUrl = `${API_BASE_URL}/28property/image/${imageId}`;
-    res.json({ success: true, image_id: imageId, image_url: imageUrl });
-  } catch (err) {
-    console.error('internal/upload-image error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
 app.get('/28property/image/:id', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
@@ -1852,17 +1799,60 @@ const JOB_DETAILS_WEBHOOK = 'https://primary-production-ab4a6.up.railway.app/web
 
 app.post('/28property/start-pipeline', authMiddleware, async (req, res) => {
   try {
-    const payload = {
-      ...req.body,
-      action:      'start_pipeline',
-      user_email:  req.user.email || '',
-      user_name:   req.user.name  || '',
-      user_role:   req.user.role  || '',
-      triggered_at: new Date().toISOString()
-    };
+    const { record_id, task } = req.body;
 
     // Respond immediately so frontend doesn't wait
     res.json({ success: true, message: 'Pipeline triggered' });
+
+    // Fetch full scene row from Airtable
+    let sceneFields = {};
+    let jobFields = {};
+    if (record_id) {
+      try {
+        const sceneData = await atFetch(`/${AIRTABLE_SCENES}/${record_id}`);
+        sceneFields = sceneData.fields || {};
+
+        // Also fetch the parent job record if job_id is available
+        const jobId = sceneFields.job_id;
+        if (jobId) {
+          const jobData = await atFetch(`/${AIRTABLE_TABLE}/${jobId}`);
+          jobFields = jobData.fields || {};
+        }
+      } catch (e) {
+        console.warn('[start-pipeline] Airtable fetch failed:', e.message);
+      }
+    }
+
+    const payload = {
+      ...req.body,
+      // Full scene data
+      scene_number:          sceneFields.scene_number          || null,
+      scene_type:            sceneFields.scene_type            || req.body.scene_type || '',
+      pacing:                sceneFields.pacing                || null,
+      image_prompt:          sceneFields.image_prompt          || '',
+      negative_prompt:       sceneFields.negative_prompt       || '',
+      voiceover_sync_EN:     sceneFields.voiceover_sync_EN     || '',
+      voiceover_sync_TH:     sceneFields.voiceover_sync_TH     || '',
+      full_script_EN:        sceneFields.full_script_EN        || '',
+      full_script_TH:        sceneFields.full_script_TH        || '',
+      voice_id:              sceneFields.voice_id              || req.body.voice_id || '',
+      image:                 sceneFields.image                 || null,
+      audio_EN:              sceneFields.audio_EN              || null,
+      audio_TH:              sceneFields.audio_TH              || null,
+      estimated_duration_secs: sceneFields.estimated_duration_secs || null,
+      // Parent job data
+      job_id:                sceneFields.job_id                || '',
+      industry:              jobFields['Industry ( **required** )'] || '',
+      pipeline:              jobFields['pipeline ( **required** )'] || '',
+      search_focus:          jobFields['search_focus ( **required** )'] || '',
+      job_title:             jobFields['title']                || '',
+      // User info
+      action:                'start_pipeline',
+      user_email:            req.user.email || '',
+      user_name:             req.user.name  || '',
+      user_role:             req.user.role  || '',
+      triggered_at:          new Date().toISOString()
+    };
 
     fetch(JOB_DETAILS_WEBHOOK, {
       method: 'POST',
