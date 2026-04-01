@@ -2,6 +2,9 @@ const express = require('express');
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const multer = require('multer');
+const path   = require('path');
+const fs     = require('fs');
 
 const app = express();
 
@@ -14,19 +17,7 @@ app.use(function(req, res, next) {
   next();
 });
 
-// ── RAW BODY for multipart uploads (must come before express.json) ──
-app.use((req, res, next) => {
-  if (req.headers['content-type'] && req.headers['content-type'].includes('multipart/form-data')) {
-    const chunks = [];
-    req.on('data', chunk => chunks.push(chunk));
-    req.on('end', () => {
-      req.rawBody = Buffer.concat(chunks);
-      next();
-    });
-  } else {
-    next();
-  }
-});
+// multer handles multipart/form-data — no raw body middleware needed
 
 app.use(express.json());
 
@@ -2148,6 +2139,75 @@ app.get('/billing/history', authMiddleware, async (req, res) => {
     res.json({ success: true, entries: result.rows, total: total.toFixed(4) });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+
+// ── MULTER STORAGE — video uploads ───────────────────────────────────────────
+const _videoStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const dir = path.join(__dirname, 'uploads');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
+  },
+  filename: function (req, file, cb) {
+    const ext  = path.extname(file.originalname) || '.mp4';
+    const name = path.basename(file.originalname, ext) || Date.now().toString();
+    cb(null, name + ext);
+  }
+});
+const _videoUpload = multer({
+  storage: _videoStorage,
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB
+  fileFilter: function (req, file, cb) {
+    const ok = ['video/mp4', 'application/octet-stream', 'video/quicktime'].includes(file.mimetype);
+    cb(ok ? null : new Error('Only video files allowed'), ok);
+  }
+});
+
+// Serve uploaded videos publicly
+app.use('/files', express.static(path.join(__dirname, 'uploads')));
+
+// POST /upload/video — called by n8n after Kie.ai renders the clip
+// Body: multipart/form-data  { file: <binary mp4>, record_id: <airtable record id> }
+app.post('/upload/video', _videoUpload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ success: false, error: 'No file received' });
+    const recordId = req.body.record_id;
+    if (!recordId) return res.status(400).json({ success: false, error: 'Missing record_id' });
+
+    const fileUrl = `${API_BASE_URL}/files/${req.file.filename}`;
+    console.log(`[upload/video] ${req.file.filename} (${(req.file.size/1024/1024).toFixed(2)} MB) → ${fileUrl}`);
+
+    // Write URL back to video_production Airtable table
+    const atRes = await fetch(
+      `https://api.airtable.com/v0/${AIRTABLE_BASE}/${AIRTABLE_SCENES}/${recordId}`,
+      {
+        method: 'PATCH',
+        headers: { 'Authorization': `Bearer ${AIRTABLE_PAT}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields: { video: fileUrl } })
+      }
+    );
+    if (!atRes.ok) {
+      const err = await atRes.text();
+      console.error('[upload/video] Airtable update failed:', err);
+      return res.json({ success: true, url: fileUrl, airtable_error: err });
+    }
+    console.log(`[upload/video] Airtable record ${recordId} updated`);
+
+    // Notify SSE clients so frontend updates the video cell live
+    sseBroadcast(JSON.stringify({
+      type: 'job_complete',
+      record_id: recordId,
+      status: 'Complete',
+      task: 'video',
+      url: fileUrl
+    }));
+
+    return res.json({ success: true, url: fileUrl, record_id: recordId });
+  } catch (err) {
+    console.error('[upload/video] Error:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 
