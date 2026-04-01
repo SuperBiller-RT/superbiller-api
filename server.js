@@ -2165,8 +2165,12 @@ const _videoUpload = multer({
   }
 });
 
-// Serve uploaded videos publicly
-app.use('/files', express.static(path.join(__dirname, 'uploads')));
+// Serve uploaded videos publicly with CORS headers
+app.use('/files', (req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Cross-Origin-Resource-Policy', 'cross-origin');
+  next();
+}, express.static(path.join(__dirname, 'uploads')));
 
 // POST /upload/video — called by n8n after Kie.ai renders the clip
 // Body: multipart/form-data  { file: <binary mp4>, record_id: <airtable record id> }
