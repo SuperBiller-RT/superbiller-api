@@ -2179,6 +2179,14 @@ app.post('/upload/video', _videoUpload.single('file'), async (req, res) => {
     const fileUrl = `${API_BASE_URL}/files/${req.file.filename}`;
     console.log(`[upload/video] ${req.file.filename} (${(req.file.size/1024/1024).toFixed(2)} MB) → ${fileUrl}`);
 
+    // Log to Postgres
+    await db.query(
+      `INSERT INTO uploaded_videos (record_id, filename, url, file_size)
+       VALUES ($1, $2, $3, $4)`,
+      [recordId, req.file.filename, fileUrl, req.file.size]
+    );
+    console.log(`[upload/video] Logged to Postgres`);
+
     // Write URL back to video_production Airtable table
     const atRes = await fetch(
       `https://api.airtable.com/v0/${AIRTABLE_BASE}/${AIRTABLE_SCENES}/${recordId}`,
