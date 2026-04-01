@@ -124,6 +124,20 @@ async function setupDB() {
   `);
   await db.query(`ALTER TABLE property_agent_images ADD COLUMN IF NOT EXISTS avatar_prompt TEXT`).catch(() => {});
 
+  // Scene images — Gemini/AI generated scene images hosted via Postgres for Airtable URL injection
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS scene_images (
+      id SERIAL PRIMARY KEY,
+      filename VARCHAR(255),
+      mime_type VARCHAR(100),
+      data BYTEA NOT NULL,
+      scene_record_id VARCHAR(255),
+      job_id VARCHAR(255),
+      user_email VARCHAR(200),
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `).catch(() => {});
+
   // Separate table for AI recruitment media (images + videos)
   await db.query(`
     CREATE TABLE IF NOT EXISTS recruitment_media (
@@ -826,6 +840,41 @@ app.post('/internal/upload-image', async (req, res) => {
     res.json({ success: true, image_id: imageId, image_url: `${API_BASE_URL}/28property/image/${imageId}` });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Internal n8n upload — AI generated scene images (Gemini binary → hosted URL for Airtable)
+app.post('/internal/upload-scene-image', async (req, res) => {
+  try {
+    const parsed = parseMultipart(req);
+    if (!parsed || !parsed.file) return res.status(400).json({ success: false, error: 'No image file received' });
+    const { file, fields } = parsed;
+    const result = await db.query(
+      `INSERT INTO scene_images (filename, mime_type, data, scene_record_id, job_id, user_email) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+      [file.fileName, file.mimeType, file.buffer, fields.scene_record_id || '', fields.job_id || '', 'n8n@internal']
+    );
+    const imageId = result.rows[0].id;
+    res.json({ success: true, image_id: imageId, image_url: `${API_BASE_URL}/scene-image/${imageId}` });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Serve scene image
+app.get('/scene-image/:id', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (!id || isNaN(id)) return res.status(400).json({ error: 'Invalid image ID' });
+    const result = await db.query('SELECT data, mime_type FROM scene_images WHERE id = $1', [id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Image not found' });
+    const { data, mime_type } = result.rows[0];
+    res.setHeader('Content-Type', mime_type);
+    res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
+    res.setHeader('ETag', `"scene-${id}"`);
+    if (req.headers['if-none-match'] === `"scene-${id}"`) return res.status(304).end();
+    return res.send(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
