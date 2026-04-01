@@ -2187,31 +2187,6 @@ app.post('/upload/video', _videoUpload.single('file'), async (req, res) => {
     );
     console.log(`[upload/video] Logged to Postgres`);
 
-    // Write URL back to video_production Airtable table
-    const atRes = await fetch(
-      `https://api.airtable.com/v0/${AIRTABLE_BASE}/${AIRTABLE_SCENES}/${recordId}`,
-      {
-        method: 'PATCH',
-        headers: { 'Authorization': `Bearer ${AIRTABLE_PAT}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fields: { video: fileUrl } })
-      }
-    );
-    if (!atRes.ok) {
-      const err = await atRes.text();
-      console.error('[upload/video] Airtable update failed:', err);
-      return res.json({ success: true, url: fileUrl, airtable_error: err });
-    }
-    console.log(`[upload/video] Airtable record ${recordId} updated`);
-
-    // Notify SSE clients so frontend updates the video cell live
-    sseBroadcast(JSON.stringify({
-      type: 'job_complete',
-      record_id: recordId,
-      status: 'Complete',
-      task: 'video',
-      url: fileUrl
-    }));
-
     return res.json({ success: true, url: fileUrl, record_id: recordId });
   } catch (err) {
     console.error('[upload/video] Error:', err.message);
