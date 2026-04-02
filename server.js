@@ -896,9 +896,10 @@ app.post('/db/query', authMiddleware, async (req, res) => {
 app.post('/28property/upload', authMiddleware, (req, res) => {
   try {
     const Busboy = require('busboy');
-    const busboy = Busboy({ headers: req.headers });
+    const busboy = Busboy({ headers: req.headers, limits: { fileSize: 5 * 1024 * 1024 } });
 
     let fileBuffer = null, fileName = 'agent-photo', mimeType = 'image/jpeg', agentName = '';
+    let fileSizeLimitHit = false;
     const chunks = [];
 
     busboy.on('file', (fieldname, file, info) => {
@@ -906,7 +907,10 @@ app.post('/28property/upload', authMiddleware, (req, res) => {
       fileName = filename || 'agent-photo';
       mimeType = mime || 'image/jpeg';
       file.on('data', chunk => chunks.push(chunk));
-      file.on('end', () => { fileBuffer = Buffer.concat(chunks); });
+      file.on('limit', () => { fileSizeLimitHit = true; });
+      file.on('end', () => {
+        if (!fileSizeLimitHit) fileBuffer = Buffer.concat(chunks);
+      });
     });
 
     busboy.on('field', (name, val) => {
@@ -915,6 +919,8 @@ app.post('/28property/upload', authMiddleware, (req, res) => {
 
     busboy.on('finish', async () => {
       try {
+        if (fileSizeLimitHit)
+          return res.status(400).json({ success: false, error: 'Image must be under 5MB' });
         if (!fileBuffer || fileBuffer.length === 0)
           return res.status(400).json({ success: false, error: 'No image file received' });
 
@@ -1912,7 +1918,7 @@ app.post('/28property/regen-line', authMiddleware, async (req, res) => {
     // Respond immediately — result will come back via SSE /notify/regen-line
     res.json({ success: true, message: 'Regenerating...' });
 
-    fetch(WEBHOOK, {
+    fetch(JOB_DETAILS_WEBHOOK, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
