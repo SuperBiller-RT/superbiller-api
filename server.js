@@ -2,9 +2,6 @@ const express = require('express');
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const multer = require('multer');
-const path   = require('path');
-const fs     = require('fs');
 
 const app = express();
 
@@ -17,7 +14,15 @@ app.use(function(req, res, next) {
   next();
 });
 
-// multer handles multipart/form-data — no raw body middleware needed
+// ── JSON BODY PARSER ──────────────────────────────────────
+// Note: multipart/form-data routes (e.g. /28property/upload) use busboy and pipe
+// the raw request stream directly — they must NOT go through express.json()
+app.use((req, res, next) => {
+  if (req.headers['content-type'] && req.headers['content-type'].includes('multipart/form-data')) {
+    return next(); // skip body parsing — busboy handles it
+  }
+  next();
+});
 
 app.use(express.json());
 
@@ -643,62 +648,64 @@ app.post('/airtable/scenes/batch-update', authMiddleware, async (req, res) => {
   }
 });
 
-app.post('/airtable/scene/upload', authMiddleware, async (req, res) => {
+app.post('/airtable/scene/upload', authMiddleware, (req, res) => {
   try {
-    const body = req.rawBody;
-    if (!body) return res.status(400).json({ success: false, error: 'No body received' });
+    const Busboy = require('busboy');
+    const busboy = Busboy({ headers: req.headers });
 
-    const contentType = req.headers['content-type'] || '';
-    const boundaryMatch = contentType.match(/boundary=(.+)$/);
-    if (!boundaryMatch) return res.status(400).json({ success: false, error: 'No boundary in content-type' });
-    const boundary = boundaryMatch[1].trim();
-
-    const parts = body.toString('binary').split('--' + boundary);
     let fileBuffer = null, fileName = 'upload', mimeType = 'application/octet-stream';
     let recordId = null, field = null;
+    const chunks = [];
 
-    for (const part of parts) {
-      if (!part.includes('Content-Disposition')) continue;
-      const nameMatch = part.match(/name="([^"]+)"/);
-      const filenameMatch = part.match(/filename="([^"]+)"/);
-      const ctMatch = part.match(/Content-Type: ([^\r\n]+)/);
-      const name = nameMatch ? nameMatch[1] : '';
-      const headerEnd = part.indexOf('\r\n\r\n');
-      if (headerEnd === -1) continue;
-      const value = part.slice(headerEnd + 4, part.lastIndexOf('\r\n'));
+    busboy.on('file', (fieldname, file, info) => {
+      fileName = info.filename || 'upload';
+      mimeType = info.mimeType || 'application/octet-stream';
+      file.on('data', chunk => chunks.push(chunk));
+      file.on('end', () => { fileBuffer = Buffer.concat(chunks); });
+    });
 
-      if (name === 'record_id') { recordId = value.trim(); }
-      else if (name === 'field') { field = value.trim(); }
-      else if (filenameMatch) {
-        fileName = filenameMatch[1];
-        mimeType = ctMatch ? ctMatch[1].trim() : 'application/octet-stream';
-        fileBuffer = Buffer.from(value, 'binary');
+    busboy.on('field', (name, val) => {
+      if (name === 'record_id') recordId = val.trim();
+      else if (name === 'field') field = val.trim();
+    });
+
+    busboy.on('finish', async () => {
+      try {
+        if (!recordId || !field || !fileBuffer)
+          return res.status(400).json({ success: false, error: 'Missing record_id, field, or file' });
+
+        const allowedFields = ['image', 'video_EN'];
+        if (!allowedFields.includes(field))
+          return res.status(400).json({ success: false, error: 'Field not allowed: ' + field });
+
+        const uploadRes = await fetch(
+          `https://content.airtable.com/v0/${AIRTABLE_BASE}/${recordId}/${field}/uploadAttachment`,
+          {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${AIRTABLE_PAT}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ contentType: mimeType, filename: fileName, file: fileBuffer.toString('base64') })
+          }
+        );
+
+        const uploadData = await uploadRes.json();
+        if (uploadData.error || !uploadData.id) {
+          console.error('Airtable upload error:', uploadData);
+          return res.status(500).json({ success: false, error: uploadData.error || 'Airtable upload failed' });
+        }
+
+        res.json({ success: true, attachment: uploadData });
+      } catch (err) {
+        console.error('Scene upload db error:', err.message);
+        res.status(500).json({ success: false, error: err.message });
       }
-    }
+    });
 
-    if (!recordId || !field || !fileBuffer)
-      return res.status(400).json({ success: false, error: 'Missing record_id, field, or file' });
+    busboy.on('error', (err) => {
+      console.error('Scene upload busboy error:', err.message);
+      res.status(500).json({ success: false, error: 'Upload parse error: ' + err.message });
+    });
 
-    const allowedFields = ['image', 'video_EN'];
-    if (!allowedFields.includes(field))
-      return res.status(400).json({ success: false, error: 'Field not allowed: ' + field });
-
-    const uploadRes = await fetch(
-      `https://content.airtable.com/v0/${AIRTABLE_BASE}/${recordId}/${field}/uploadAttachment`,
-      {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${AIRTABLE_PAT}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contentType: mimeType, filename: fileName, file: fileBuffer.toString('base64') })
-      }
-    );
-
-    const uploadData = await uploadRes.json();
-    if (uploadData.error || !uploadData.id) {
-      console.error('Airtable upload error:', uploadData);
-      return res.status(500).json({ success: false, error: uploadData.error || 'Airtable upload failed' });
-    }
-
-    res.json({ success: true, attachment: uploadData });
+    req.pipe(busboy);
   } catch (err) {
     console.error('Upload error:', err.message);
     res.status(500).json({ success: false, error: err.message });
@@ -886,56 +893,64 @@ app.post('/db/query', authMiddleware, async (req, res) => {
 // 28PROPERTY ROUTES
 // ══════════════════════════════════════════════════════════
 
-app.post('/28property/upload', authMiddleware, async (req, res) => {
+app.post('/28property/upload', authMiddleware, (req, res) => {
   try {
-    const body = req.rawBody;
-    if (!body) return res.status(400).json({ success: false, error: 'No body received' });
+    const Busboy = require('busboy');
+    const busboy = Busboy({ headers: req.headers, limits: { fileSize: 5 * 1024 * 1024 } });
 
-    const contentType = req.headers['content-type'] || '';
-    const boundaryMatch = contentType.match(/boundary=(.+)$/);
-    if (!boundaryMatch) return res.status(400).json({ success: false, error: 'No boundary in content-type' });
-    const boundary = boundaryMatch[1].trim();
-
-    const parts = body.toString('binary').split('--' + boundary);
     let fileBuffer = null, fileName = 'agent-photo', mimeType = 'image/jpeg', agentName = '';
+    let fileSizeLimitHit = false;
+    const chunks = [];
 
-    for (const part of parts) {
-      if (!part.includes('Content-Disposition')) continue;
-      const nameMatch     = part.match(/name="([^"]+)"/);
-      const filenameMatch = part.match(/filename="([^"]+)"/);
-      const ctMatch       = part.match(/Content-Type: ([^\r\n]+)/);
-      const name          = nameMatch ? nameMatch[1] : '';
-      const headerEnd     = part.indexOf('\r\n\r\n');
-      if (headerEnd === -1) continue;
-      const value = part.slice(headerEnd + 4, part.lastIndexOf('\r\n'));
+    busboy.on('file', (fieldname, file, info) => {
+      const { filename, mimeType: mime } = info;
+      fileName = filename || 'agent-photo';
+      mimeType = mime || 'image/jpeg';
+      file.on('data', chunk => chunks.push(chunk));
+      file.on('limit', () => { fileSizeLimitHit = true; });
+      file.on('end', () => {
+        if (!fileSizeLimitHit) fileBuffer = Buffer.concat(chunks);
+      });
+    });
 
-      if (name === 'agent_name') { agentName = value.trim(); }
-      else if (filenameMatch) {
-        fileName   = filenameMatch[1];
-        mimeType   = ctMatch ? ctMatch[1].trim() : 'image/jpeg';
-        fileBuffer = Buffer.from(value, 'binary');
+    busboy.on('field', (name, val) => {
+      if (name === 'agent_name') agentName = val.trim();
+    });
+
+    busboy.on('finish', async () => {
+      try {
+        if (fileSizeLimitHit)
+          return res.status(400).json({ success: false, error: 'Image must be under 5MB' });
+        if (!fileBuffer || fileBuffer.length === 0)
+          return res.status(400).json({ success: false, error: 'No image file received' });
+
+        const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+        // Normalise — some browsers send image/jpg
+        const normMime = mimeType.split(';')[0].trim().toLowerCase();
+        if (!allowedTypes.includes(normMime))
+          return res.status(400).json({ success: false, error: 'Only JPG, PNG or WebP images allowed' });
+
+        const result = await db.query(
+          `INSERT INTO property_agent_images (filename, mime_type, data, agent_name, user_email)
+           VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+          [fileName, normMime, fileBuffer, agentName, req.user.email || '']
+        );
+
+        const imageId  = result.rows[0].id;
+        const imageUrl = `${API_BASE_URL}/28property/image/${imageId}`;
+        res.json({ success: true, image_id: imageId, image_url: imageUrl });
+      } catch (err) {
+        console.error('28property upload db error:', err.message);
+        res.status(500).json({ success: false, error: err.message });
       }
-    }
+    });
 
-    if (!fileBuffer)
-      return res.status(400).json({ success: false, error: 'No image file received' });
+    busboy.on('error', (err) => {
+      console.error('28property upload busboy error:', err.message);
+      res.status(500).json({ success: false, error: 'Upload parse error: ' + err.message });
+    });
 
-    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
-    if (!allowedTypes.includes(mimeType))
-      return res.status(400).json({ success: false, error: 'Only JPG, PNG or WebP images allowed' });
-
-    if (fileBuffer.length > 5 * 1024 * 1024)
-      return res.status(400).json({ success: false, error: 'Image must be under 5MB' });
-
-    const result = await db.query(
-      `INSERT INTO property_agent_images (filename, mime_type, data, agent_name, user_email)
-       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-      [fileName, mimeType, fileBuffer, agentName, req.user.email || '']
-    );
-
-    const imageId  = result.rows[0].id;
-    const imageUrl = `${API_BASE_URL}/28property/image/${imageId}`;
-    res.json({ success: true, image_id: imageId, image_url: imageUrl });
+    req.pipe(busboy);
   } catch (err) {
     console.error('28property upload error:', err.message);
     res.status(500).json({ success: false, error: err.message });
@@ -2139,62 +2154,6 @@ app.get('/billing/history', authMiddleware, async (req, res) => {
     res.json({ success: true, entries: result.rows, total: total.toFixed(4) });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-
-// ── MULTER STORAGE — video uploads ───────────────────────────────────────────
-const _videoStorage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    const dir = path.join(__dirname, 'uploads');
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    cb(null, dir);
-  },
-  filename: function (req, file, cb) {
-    const ext  = path.extname(file.originalname) || '.mp4';
-    const name = path.basename(file.originalname, ext) || Date.now().toString();
-    cb(null, name + ext);
-  }
-});
-const _videoUpload = multer({
-  storage: _videoStorage,
-  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB
-  fileFilter: function (req, file, cb) {
-    const ok = ['video/mp4', 'application/octet-stream', 'video/quicktime'].includes(file.mimetype);
-    cb(ok ? null : new Error('Only video files allowed'), ok);
-  }
-});
-
-// Serve uploaded videos publicly with CORS headers
-app.use('/files', (req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Cross-Origin-Resource-Policy', 'cross-origin');
-  next();
-}, express.static(path.join(__dirname, 'uploads')));
-
-// POST /upload/video — called by n8n after Kie.ai renders the clip
-// Body: multipart/form-data  { file: <binary mp4>, record_id: <airtable record id> }
-app.post('/upload/video', _videoUpload.single('file'), async (req, res) => {
-  try {
-    if (!req.file) return res.status(400).json({ success: false, error: 'No file received' });
-    const recordId = req.body.record_id;
-    if (!recordId) return res.status(400).json({ success: false, error: 'Missing record_id' });
-
-    const fileUrl = `${API_BASE_URL}/files/${req.file.filename}`;
-    console.log(`[upload/video] ${req.file.filename} (${(req.file.size/1024/1024).toFixed(2)} MB) → ${fileUrl}`);
-
-    // Log to Postgres
-    await db.query(
-      `INSERT INTO uploaded_videos (record_id, filename, url, file_size)
-       VALUES ($1, $2, $3, $4)`,
-      [recordId, req.file.filename, fileUrl, req.file.size]
-    );
-    console.log(`[upload/video] Logged to Postgres`);
-
-    return res.json({ success: true, url: fileUrl, record_id: recordId });
-  } catch (err) {
-    console.error('[upload/video] Error:', err.message);
-    return res.status(500).json({ success: false, error: err.message });
   }
 });
 
