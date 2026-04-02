@@ -1918,21 +1918,65 @@ app.post('/28property/regen-line', authMiddleware, async (req, res) => {
     // Respond immediately — result will come back via SSE /notify/regen-line
     res.json({ success: true, message: 'Regenerating...' });
 
+    // Fetch full scene + parent job — same rich payload as start-pipeline
+    let sceneFields = {}, jobFields = {};
+    if (scene_id) {
+      try {
+        const sceneData = await atFetch(`/${AIRTABLE_SCENES}/${scene_id}`);
+        sceneFields = sceneData.fields || {};
+        const jobId = sceneFields.job_id;
+        if (jobId) {
+          const jobData = await atFetch(`/${AIRTABLE_TABLE}/${jobId}`);
+          jobFields = jobData.fields || {};
+        }
+      } catch (e) {
+        console.warn('[regen-line] Airtable fetch failed:', e.message);
+      }
+    }
+
     fetch(JOB_DETAILS_WEBHOOK, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        // Original regen fields
         ...req.body,
-        action:       'regen_line',
-        lang:          lang || 'EN',
-        scene_number,
+        action:        'regen_line',
+        lang:           lang || 'EN',
+        scene_number:   scene_number  || sceneFields.scene_number || null,
         current_line,
         full_script,
-        instruction:  instruction || '',
-        job_title:    job_title || '',
-        scene_id:     scene_id || '',
-        col:          col || '',
+        instruction:   instruction || '',
+        col:           col || '',
+
+        // Full scene fields
+        record_id:               scene_id || '',
+        scene_id:                scene_id || '',
+        scene_type:              sceneFields.scene_type              || '',
+        pacing:                  sceneFields.pacing                  || null,
+        image_prompt:            sceneFields.image_prompt            || '',
+        negative_prompt:         sceneFields.negative_prompt         || '',
+        voiceover_sync_EN:       sceneFields.voiceover_sync_EN       || '',
+        voiceover_sync_TH:       sceneFields.voiceover_sync_TH       || '',
+        full_script_EN:          sceneFields.full_script_EN          || '',
+        full_script_TH:          sceneFields.full_script_TH          || '',
+        voice_id:                sceneFields.voice_id                || '',
+        image:                   sceneFields.image                   || null,
+        estimated_duration_secs: sceneFields.estimated_duration_secs || null,
+
+        // Parent job fields
+        job_id:       sceneFields.job_id                              || '',
+        session_id:   jobFields['session_id']                        || '',
+        industry:     jobFields['Industry ( **required** )']         || '',
+        pipeline:     jobFields['pipeline ( **required** )']         || '',
+        search_focus: jobFields['search_focus ( **required** )']     || '',
+        job_title:    jobFields['title'] || job_title                || '',
+        execution_id: jobFields['execution_id'] || req.body.execution_id || '',
+        agent_name:   jobFields['agent_name']                        || '',
+
+        // User info
         user_email:   req.user.email || '',
+        user_name:    req.user.name  || '',
+        user_role:    req.user.role  || '',
         triggered_at: new Date().toISOString()
       })
     })
