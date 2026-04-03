@@ -213,6 +213,8 @@ async function setupDB() {
 setupDB().catch(err => console.error('setupDB failed (non-fatal):', err.message));
 
 // ── JWT MIDDLEWARE ────────────────────────────────────────
+const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || 'sb-internal-2026';
+
 function authMiddleware(req, res, next) {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
@@ -220,6 +222,11 @@ function authMiddleware(req, res, next) {
   const header = req.headers['authorization'];
   if (!header) return res.status(401).json({ success: false, message: 'No token' });
   const token = header.replace('Bearer ', '');
+  // Internal API key bypass — for n8n and server-to-server calls
+  if (token === INTERNAL_API_KEY) {
+    req.user = { email: 'internal@superbiller.com', name: 'internal', role: 'admin' };
+    return next();
+  }
   try {
     req.user = jwt.verify(token, JWT_SECRET);
     next();
