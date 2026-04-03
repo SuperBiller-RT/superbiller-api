@@ -1149,17 +1149,24 @@ app.get('/28property/avatar/:id/prompt', async (req, res) => {
   }
 });
 
-// Save avatar prompt permanently to agent record
+// Save avatar prompt + agent_name permanently to agent record
 app.patch('/28property/avatar/:id/prompt', async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const { avatar_prompt } = req.body;
+    const { avatar_prompt, agent_name } = req.body;
     if (!avatar_prompt || !avatar_prompt.trim())
       return res.status(400).json({ success: false, error: 'avatar_prompt required' });
-    await db.query(
-      'UPDATE property_agent_images SET avatar_prompt = $1 WHERE id = $2',
-      [avatar_prompt.trim(), id]
-    );
+    if (agent_name && agent_name.trim()) {
+      await db.query(
+        'UPDATE property_agent_images SET avatar_prompt = $1, agent_name = $2 WHERE id = $3',
+        [avatar_prompt.trim(), agent_name.trim(), id]
+      );
+    } else {
+      await db.query(
+        'UPDATE property_agent_images SET avatar_prompt = $1 WHERE id = $2',
+        [avatar_prompt.trim(), id]
+      );
+    }
     res.json({ success: true, id, avatar_prompt: avatar_prompt.trim() });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
