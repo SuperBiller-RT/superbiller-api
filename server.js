@@ -47,19 +47,28 @@ const MINIO_PUBLIC  = process.env.MINIO_PUBLIC_URL || 'https://minio-production-
       await minioClient.makeBucket(MINIO_BUCKET, 'us-east-1');
       console.log('[MinIO] Bucket created:', MINIO_BUCKET);
     }
-    // Always apply public read policy on startup
+    // Apply public read policy using correct MinIO anonymous format
     const policy = JSON.stringify({
       Version: '2012-10-17',
-      Statement: [{
-        Sid: 'PublicRead',
-        Effect: 'Allow',
-        Principal: '*',
-        Action: ['s3:GetObject'],
-        Resource: ['arn:aws:s3:::' + MINIO_BUCKET + '/*']
-      }]
+      Statement: [
+        {
+          Sid: 'PublicRead',
+          Effect: 'Allow',
+          Principal: { AWS: ['*'] },
+          Action: ['s3:GetObject', 's3:GetObjectVersion'],
+          Resource: ['arn:aws:s3:::' + MINIO_BUCKET + '/*']
+        },
+        {
+          Sid: 'PublicList',
+          Effect: 'Allow',
+          Principal: { AWS: ['*'] },
+          Action: ['s3:ListBucket', 's3:GetBucketLocation'],
+          Resource: ['arn:aws:s3:::' + MINIO_BUCKET]
+        }
+      ]
     });
     await minioClient.setBucketPolicy(MINIO_BUCKET, policy);
-    console.log('[MinIO] Public read policy applied:', MINIO_BUCKET);
+    console.log('[MinIO] Public policy applied OK');
   } catch (e) {
     console.error('[MinIO] Startup error:', e.message);
   }
