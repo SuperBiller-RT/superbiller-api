@@ -1973,6 +1973,8 @@ app.post('/28property/start-pipeline', authMiddleware, async (req, res) => {
       full_script_TH:          sceneFields.full_script_TH          || '',
       voice_id:                sceneFields.voice_id                || req.body.voice_id || '',
       image:                   sceneFields.image                   || null,
+      start_image:             sceneFields.start_image             || null,
+      end_image:               sceneFields.end_image               || null,
       audio_EN:                sceneFields.audio_EN                || null,
       audio_TH:                sceneFields.audio_TH                || null,
       estimated_duration_secs: sceneFields.estimated_duration_secs || null,
@@ -2090,6 +2092,8 @@ app.post('/28property/regen-line', authMiddleware, async (req, res) => {
         full_script_TH:          sceneFields.full_script_TH          || '',
         voice_id:                sceneFields.voice_id                || '',
         image:                   sceneFields.image                   || null,
+      start_image:             sceneFields.start_image             || null,
+      end_image:               sceneFields.end_image               || null,
         estimated_duration_secs: sceneFields.estimated_duration_secs || null,
 
         // Parent job fields
