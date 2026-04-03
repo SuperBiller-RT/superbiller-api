@@ -2,6 +2,7 @@ const express = require('express');
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const Minio = require('minio');
 
 const app = express();
 
@@ -27,6 +28,38 @@ app.use((req, res, next) => {
 app.use(express.json());
 
 // ── POSTGRES ──────────────────────────────────────────────
+// ── MINIO CLIENT ─────────────────────────────────────────────────────────────
+const minioClient = new Minio.Client({
+  endPoint:  process.env.MINIO_ENDPOINT  || 'minio.railway.internal',
+  port:      parseInt(process.env.MINIO_PORT || '9000'),
+  useSSL:    false,
+  accessKey: process.env.MINIO_ACCESS_KEY || 'superbiller',
+  secretKey: process.env.MINIO_SECRET_KEY || 'Sb2026MediaStore',
+});
+const MINIO_BUCKET  = process.env.MINIO_BUCKET   || 'superbiller-media';
+const MINIO_PUBLIC  = process.env.MINIO_PUBLIC_URL || 'https://minio-production-0f46.up.railway.app';
+
+// Ensure bucket exists on startup
+(async () => {
+  try {
+    const exists = await minioClient.bucketExists(MINIO_BUCKET);
+    if (!exists) {
+      await minioClient.makeBucket(MINIO_BUCKET, 'us-east-1');
+      // Set public read policy
+      const policy = JSON.stringify({
+        Version: '2012-10-17',
+        Statement: [{ Effect: 'Allow', Principal: { AWS: ['*'] }, Action: ['s3:GetObject'], Resource: ['arn:aws:s3:::' + MINIO_BUCKET + '/*'] }]
+      });
+      await minioClient.setBucketPolicy(MINIO_BUCKET, policy);
+      console.log('[MinIO] Bucket created:', MINIO_BUCKET);
+    } else {
+      console.log('[MinIO] Bucket ready:', MINIO_BUCKET);
+    }
+  } catch (e) {
+    console.error('[MinIO] Startup error:', e.message);
+  }
+})();
+
 const db = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false }
@@ -2201,6 +2234,194 @@ app.get('/billing/history', authMiddleware, async (req, res) => {
   }
 });
 
+
+// ══════════════════════════════════════════════════════════
+// ENTERPRISE MEDIA STORAGE — MinIO
+// All media organised by: jobs/{job_id}/{media_type}/{scene_id}-{ts}.ext
+// Avatars:  avatars/{user_email}/{ts}-{name}.ext
+// General:  general/{user_email}/{ts}.ext
+// DB table: media_assets tracks everything with full metadata
+// ══════════════════════════════════════════════════════════
+
+// ── Ensure media_assets table exists ─────────────────────
+db.query(`
+  CREATE TABLE IF NOT EXISTS media_assets (
+    id            SERIAL PRIMARY KEY,
+    key           TEXT NOT NULL UNIQUE,
+    url           TEXT NOT NULL,
+    media_type    VARCHAR(50),
+    job_id        VARCHAR(100),
+    session_id    VARCHAR(100),
+    scene_id      VARCHAR(100),
+    scene_number  INTEGER,
+    agent_name    VARCHAR(200),
+    user_email    VARCHAR(200),
+    mime_type     VARCHAR(100),
+    size_bytes    INTEGER,
+    filename      TEXT,
+    created_at    TIMESTAMPTZ DEFAULT NOW()
+  )
+`).catch(() => {});
+
+// ── Helper: upload buffer to MinIO + record in DB ─────────
+async function uploadToMinIO({ buffer, filename, mimeType, mediaType, jobId, sessionId, sceneId, sceneNumber, agentName, userEmail }) {
+  const ext   = (filename || 'file').split('.').pop().toLowerCase().replace(/[^a-z0-9]/g, '') || 'bin';
+  const base  = (filename || 'file').replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 40);
+  const ts    = Date.now();
+
+  // Build folder path based on media type
+  let folder;
+  if (jobId) {
+    folder = 'jobs/' + jobId + '/' + (mediaType || 'general');
+  } else if (mediaType === 'avatar') {
+    folder = 'avatars/' + (userEmail || 'unknown').replace(/[^a-zA-Z0-9_-]/g, '_');
+  } else {
+    folder = 'general/' + (userEmail || 'unknown').replace(/[^a-zA-Z0-9_-]/g, '_');
+  }
+
+  const fileKey = folder + '/' + (sceneId ? sceneId + '-' : '') + ts + '-' + base + '.' + ext;
+
+  await minioClient.putObject(MINIO_BUCKET, fileKey, buffer, buffer.length, { 'Content-Type': mimeType });
+
+  const url = MINIO_PUBLIC + '/' + MINIO_BUCKET + '/' + fileKey;
+
+  // Record in DB
+  await db.query(
+    `INSERT INTO media_assets (key, url, media_type, job_id, session_id, scene_id, scene_number, agent_name, user_email, mime_type, size_bytes, filename)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+     ON CONFLICT (key) DO UPDATE SET url = EXCLUDED.url`,
+    [fileKey, url, mediaType || 'general', jobId || null, sessionId || null, sceneId || null,
+     sceneNumber || null, agentName || null, userEmail || null, mimeType, buffer.length, filename || null]
+  ).catch(e => console.warn('[MinIO DB] record error:', e.message));
+
+  console.log('[MinIO] Stored:', fileKey, '(' + buffer.length + ' bytes)');
+  return { url, key: fileKey };
+}
+
+// ── POST /media/upload — universal multipart upload ───────
+// Fields: file (binary), media_type, job_id, session_id, scene_id, scene_number, agent_name
+app.post('/media/upload', authMiddleware, (req, res) => {
+  try {
+    const Busboy = require('busboy');
+    const busboy = Busboy({ headers: req.headers });
+    let fileBuffer = null, fileName = 'file', mimeType = 'application/octet-stream';
+    let mediaType = 'general', jobId = '', sessionId = '', sceneId = '', sceneNumber = null, agentName = '';
+    const chunks = [];
+
+    busboy.on('field', (name, val) => {
+      if (name === 'media_type')   mediaType   = val.trim();
+      if (name === 'job_id')       jobId       = val.trim();
+      if (name === 'session_id')   sessionId   = val.trim();
+      if (name === 'scene_id')     sceneId     = val.trim();
+      if (name === 'scene_number') sceneNumber = parseInt(val) || null;
+      if (name === 'agent_name')   agentName   = val.trim();
+    });
+
+    busboy.on('file', (fieldname, file, info) => {
+      fileName = info.filename || 'file';
+      mimeType = info.mimeType || 'application/octet-stream';
+      file.on('data', chunk => chunks.push(chunk));
+      file.on('end', () => { fileBuffer = Buffer.concat(chunks); });
+    });
+
+    busboy.on('finish', async () => {
+      try {
+        if (!fileBuffer || fileBuffer.length === 0)
+          return res.status(400).json({ success: false, error: 'No file received' });
+
+        const result = await uploadToMinIO({
+          buffer: fileBuffer, filename: fileName, mimeType,
+          mediaType, jobId, sessionId, sceneId, sceneNumber,
+          agentName, userEmail: req.user.email || ''
+        });
+
+        res.json({ success: true, ...result });
+      } catch (err) {
+        console.error('[MinIO] Upload error:', err.message);
+        res.status(500).json({ success: false, error: err.message });
+      }
+    });
+
+    busboy.on('error', err => res.status(500).json({ success: false, error: err.message }));
+    req.pipe(busboy);
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── POST /media/upload-url — upload from a remote URL (n8n use) ──────────────
+// Body: { url, media_type, job_id, session_id, scene_id, scene_number, agent_name, filename }
+app.post('/media/upload-url', authMiddleware, async (req, res) => {
+  try {
+    const { url, media_type, job_id, session_id, scene_id, scene_number, agent_name, filename } = req.body;
+    if (!url) return res.status(400).json({ success: false, error: 'url required' });
+
+    const response = await fetch(url);
+    if (!response.ok) return res.status(400).json({ success: false, error: 'Failed to fetch URL: ' + response.status });
+
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer      = Buffer.from(arrayBuffer);
+    const mimeType    = response.headers.get('content-type') || 'application/octet-stream';
+    const guessedName = filename || url.split('?')[0].split('/').pop() || 'file';
+
+    const result = await uploadToMinIO({
+      buffer, filename: guessedName, mimeType,
+      mediaType: media_type || 'general',
+      jobId: job_id, sessionId: session_id, sceneId: scene_id,
+      sceneNumber: scene_number, agentName: agent_name,
+      userEmail: req.user.email || ''
+    });
+
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[MinIO] upload-url error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── GET /media/assets — list all assets with filters ─────────────────────────
+// Query params: job_id, session_id, scene_id, media_type, user_email
+app.get('/media/assets', authMiddleware, async (req, res) => {
+  try {
+    const { job_id, session_id, scene_id, media_type } = req.query;
+    const conditions = [], values = [];
+    if (job_id)     { conditions.push('job_id = $'     + (values.push(job_id)));     }
+    if (session_id) { conditions.push('session_id = $' + (values.push(session_id))); }
+    if (scene_id)   { conditions.push('scene_id = $'   + (values.push(scene_id)));   }
+    if (media_type) { conditions.push('media_type = $' + (values.push(media_type))); }
+    const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+    const result = await db.query(
+      `SELECT * FROM media_assets ${where} ORDER BY created_at DESC LIMIT 500`, values
+    );
+    res.json({ success: true, assets: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── DELETE /media/asset — delete from MinIO + DB ─────────────────────────────
+app.delete('/media/asset', authMiddleware, async (req, res) => {
+  try {
+    const { key } = req.body;
+    if (!key) return res.status(400).json({ success: false, error: 'key required' });
+    await minioClient.removeObject(MINIO_BUCKET, key);
+    await db.query('DELETE FROM media_assets WHERE key = $1', [key]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── GET /media/proxy/*key — proxy serve (for future private bucket) ───────────
+app.get('/media/proxy/*', async (req, res) => {
+  try {
+    const key    = req.params[0];
+    const stream = await minioClient.getObject(MINIO_BUCKET, key);
+    stream.pipe(res);
+  } catch (err) {
+    res.status(404).json({ error: 'Not found' });
+  }
+});
 
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
