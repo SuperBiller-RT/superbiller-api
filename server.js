@@ -1874,6 +1874,64 @@ app.delete('/session/clear', authMiddleware, async (req, res) => {
 
 const JOB_DETAILS_WEBHOOK = 'https://primary-production-ab4a6.up.railway.app/webhook/job-details';
 
+
+// ── POST /28property/analyze-transition — analyze images and generate scene transition ──
+app.post('/28property/analyze-transition', authMiddleware, async (req, res) => {
+  try {
+    const { record_id } = req.body;
+    res.json({ success: true, message: 'Transition analysis triggered' });
+
+    let sceneFields = {}, jobFields = {};
+    if (record_id) {
+      try {
+        const sceneData = await atFetch(`/${AIRTABLE_SCENES}/${record_id}`);
+        sceneFields = sceneData.fields || {};
+        const jobId = sceneFields.job_id;
+        if (jobId) {
+          const jobData = await atFetch(`/${AIRTABLE_TABLE}/${jobId}`);
+          jobFields = jobData.fields || {};
+        }
+      } catch (e) {
+        console.warn('[analyze-transition] Airtable fetch failed:', e.message);
+      }
+    }
+
+    const payload = {
+      ...req.body,
+      action: 'analyze_transition',
+      scene_number:       sceneFields.scene_number       || null,
+      image_prompt:       sceneFields.image_prompt       || '',
+      negative_prompt:    sceneFields.negative_prompt    || '',
+      voiceover_sync_EN:  sceneFields.voiceover_sync_EN  || '',
+      voiceover_sync_TH:  sceneFields.voiceover_sync_TH  || '',
+      voice_id:           sceneFields.voice_id           || req.body.voice_id || '',
+      image:              sceneFields.image              || null,
+      job_id:             sceneFields.job_id             || '',
+      session_id:         jobFields['session_id']        || '',
+      industry:           jobFields['Industry ( **required** )'] || '',
+      pipeline:           jobFields['pipeline ( **required** )'] || '',
+      job_title:          jobFields['title']             || '',
+      execution_id:       jobFields['execution_id']      || req.body.execution_id || '',
+      agent_name:         jobFields['agent_name']        || '',
+      user_email:         req.user.email || '',
+      user_name:          req.user.name  || '',
+      triggered_at:       new Date().toISOString()
+    };
+
+    fetch(JOB_DETAILS_WEBHOOK, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    .then(async r => { const t = await r.text(); console.log('[analyze-transition webhook]', r.status, t.slice(0, 120)); })
+    .catch(err => console.error('[analyze-transition webhook] FAILED:', err.message));
+
+  } catch (err) {
+    console.error('analyze-transition error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.post('/28property/start-pipeline', authMiddleware, async (req, res) => {
   try {
     const { record_id } = req.body;
