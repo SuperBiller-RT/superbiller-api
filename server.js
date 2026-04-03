@@ -646,7 +646,7 @@ app.post('/airtable/scene/update', authMiddleware, async (req, res) => {
       'image_prompt', 'negative_prompt',
       'voiceover_sync_EN', 'voiceover_sync_TH',
       'full_script_EN', 'full_script_TH',
-      'Generate', 'status', 'task',
+      'status', 'task',
       'scene_number', 'scene_type', 'pacing', 'estimated_duration_secs',
       'image', 'audio_EN', 'audio_TH', 'video_EN', 'full_audio_EN', 'full_audio_TH',
       'voice_id'
@@ -680,7 +680,7 @@ app.post('/airtable/scenes/batch-update', authMiddleware, async (req, res) => {
       'scene_number', 'scene_type', 'pacing', 'estimated_duration_secs',
       'image_prompt', 'negative_prompt', 'voiceover_sync_EN', 'voiceover_sync_TH',
       'full_script_EN', 'full_script_TH',
-      'Generate', 'status', 'task',
+      'status', 'task',
       'avatar_name', 'voice_id',
       'full_audio_EN', 'full_audio_TH'
     ];
@@ -738,7 +738,7 @@ app.post('/airtable/scene/upload', authMiddleware, (req, res) => {
         if (!recordId || !field || !fileBuffer)
           return res.status(400).json({ success: false, error: 'Missing record_id, field, or file' });
 
-        const allowedFields = ['image', 'video_EN'];
+        const allowedFields = ['image', 'video_EN', 'audio_EN', 'audio_TH', 'full_audio_EN', 'full_audio_TH', 'full_video'];
         if (!allowedFields.includes(field))
           return res.status(400).json({ success: false, error: 'Field not allowed: ' + field });
 
@@ -2353,6 +2353,7 @@ app.post('/media/upload', authMiddleware, (req, res) => {
       if (name === 'scene_id')     sceneId     = val.trim();
       if (name === 'scene_number') sceneNumber = parseInt(val) || null;
       if (name === 'agent_name')   agentName   = val.trim();
+      if (name === 'filename')     fileName    = val.trim();
     });
 
     busboy.on('file', (fieldname, file, info) => {
