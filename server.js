@@ -1988,7 +1988,7 @@ app.post('/28property/start-pipeline', authMiddleware, async (req, res) => {
       agent_name:              jobFields['agent_name']             || '',
 
       // User info
-      action:                  'start_pipeline',
+      action: req.body.task === 'analyze_transition' ? 'analyze_transition' : 'start_pipeline',
       user_email:              req.user.email || '',
       user_name:               req.user.name  || '',
       user_role:               req.user.role  || '',
