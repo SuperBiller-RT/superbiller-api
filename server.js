@@ -40,39 +40,45 @@ const MINIO_BUCKET  = process.env.MINIO_BUCKET   || 'superbiller-media';
 const MINIO_PUBLIC  = process.env.MINIO_PUBLIC_URL || 'https://minio-production-0f46.up.railway.app';
 
 // Ensure bucket exists on startup
-(async () => {
-  try {
-    const exists = await minioClient.bucketExists(MINIO_BUCKET);
-    if (!exists) {
-      await minioClient.makeBucket(MINIO_BUCKET, 'us-east-1');
-      console.log('[MinIO] Bucket created:', MINIO_BUCKET);
+async function ensureMinIOBucket() {
+  const policy = JSON.stringify({
+    Version: '2012-10-17',
+    Statement: [
+      {
+        Sid: 'PublicRead',
+        Effect: 'Allow',
+        Principal: { AWS: ['*'] },
+        Action: ['s3:GetObject', 's3:GetObjectVersion'],
+        Resource: ['arn:aws:s3:::' + MINIO_BUCKET + '/*']
+      },
+      {
+        Sid: 'PublicList',
+        Effect: 'Allow',
+        Principal: { AWS: ['*'] },
+        Action: ['s3:ListBucket', 's3:GetBucketLocation'],
+        Resource: ['arn:aws:s3:::' + MINIO_BUCKET]
+      }
+    ]
+  });
+
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      const exists = await minioClient.bucketExists(MINIO_BUCKET);
+      if (!exists) {
+        await minioClient.makeBucket(MINIO_BUCKET);
+        console.log('[MinIO] Bucket created:', MINIO_BUCKET);
+      }
+      await minioClient.setBucketPolicy(MINIO_BUCKET, policy);
+      console.log('[MinIO] Bucket ready + public policy applied');
+      return;
+    } catch (e) {
+      console.warn('[MinIO] Attempt ' + attempt + ' failed:', e.message);
+      if (attempt < 5) await new Promise(r => setTimeout(r, 3000 * attempt));
     }
-    // Apply public read policy using correct MinIO anonymous format
-    const policy = JSON.stringify({
-      Version: '2012-10-17',
-      Statement: [
-        {
-          Sid: 'PublicRead',
-          Effect: 'Allow',
-          Principal: { AWS: ['*'] },
-          Action: ['s3:GetObject', 's3:GetObjectVersion'],
-          Resource: ['arn:aws:s3:::' + MINIO_BUCKET + '/*']
-        },
-        {
-          Sid: 'PublicList',
-          Effect: 'Allow',
-          Principal: { AWS: ['*'] },
-          Action: ['s3:ListBucket', 's3:GetBucketLocation'],
-          Resource: ['arn:aws:s3:::' + MINIO_BUCKET]
-        }
-      ]
-    });
-    await minioClient.setBucketPolicy(MINIO_BUCKET, policy);
-    console.log('[MinIO] Public policy applied OK');
-  } catch (e) {
-    console.error('[MinIO] Startup error:', e.message);
   }
-})();
+  console.error('[MinIO] Could not initialise bucket after 5 attempts');
+}
+ensureMinIOBucket();
 
 const db = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -259,7 +265,12 @@ async function atFetch(path, opts = {}) {
       ...(opts.headers || {})
     }
   });
-  return r.json();
+  const data = await r.json();
+  if (!r.ok) {
+    const msg = data?.error?.message || data?.error || JSON.stringify(data);
+    throw new Error(`Airtable ${r.status}: ${msg}`);
+  }
+  return data;
 }
 
 // ── SSE HELPER — flushes after write (fixes Railway nginx buffering) ──────
