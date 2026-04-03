@@ -25,7 +25,7 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
 // ── POSTGRES ──────────────────────────────────────────────
 // ── MINIO CLIENT ─────────────────────────────────────────────────────────────
@@ -700,11 +700,10 @@ app.post('/airtable/scenes/batch-update', authMiddleware, async (req, res) => {
     for (let i = 0; i < records.length; i += 10) chunks.push(records.slice(i, i + 10));
 
     for (const chunk of chunks) {
-      const data = await atFetch(`/${AIRTABLE_SCENES}`, {
+      await atFetch(`/${AIRTABLE_SCENES}`, {
         method: 'PATCH',
         body: JSON.stringify({ records: chunk })
       });
-      if (data.error) return res.status(500).json({ success: false, error: data.error });
     }
 
     res.json({ success: true, updated: records.length });
@@ -968,9 +967,9 @@ app.post('/28property/upload', authMiddleware, (req, res) => {
     const chunks = [];
 
     busboy.on('file', (fieldname, file, info) => {
-      const { filename, mimeType: mime } = info;
+      const { filename, mimeType: mime, encoding } = info;
       fileName = filename || 'agent-photo';
-      mimeType = mime || 'image/jpeg';
+      mimeType = mime || info.mime || info.mimetype || 'image/jpeg';
       file.on('data', chunk => chunks.push(chunk));
       file.on('limit', () => { fileSizeLimitHit = true; });
       file.on('end', () => {
