@@ -609,7 +609,7 @@ app.get('/airtable/scenes', authMiddleware, async (req, res) => {
       'estimated_duration_secs', 'total_scenes', 'total_duration',
       'voiceover_sync_EN', 'voiceover_sync_TH',
       'full_script_EN', 'full_script_TH',
-      'image_prompt', 'negative_prompt', 'video_prompt',
+      'start_image_prompt', 'end_image_prompt',
       'Generate', 'start_image', 'end_image', 'image', 'status', 'task',
       'audio_EN', 'audio_TH', 'video_EN', 'full_audio_EN', 'full_audio_TH',
       'full_video', 'voice_id', 'job_id'
@@ -643,7 +643,7 @@ app.post('/airtable/scene/update', authMiddleware, async (req, res) => {
       return res.status(400).json({ success: false, error: 'record_id and fields required' });
 
     const allowed = [
-      'image_prompt', 'negative_prompt',
+      'start_image_prompt', 'end_image_prompt',
       'voiceover_sync_EN', 'voiceover_sync_TH',
       'full_script_EN', 'full_script_TH',
       'status', 'task',
@@ -678,7 +678,7 @@ app.post('/airtable/scenes/batch-update', authMiddleware, async (req, res) => {
 
     const allowed = [
       'scene_number', 'scene_type', 'pacing', 'estimated_duration_secs',
-      'image_prompt', 'negative_prompt', 'voiceover_sync_EN', 'voiceover_sync_TH',
+      'start_image_prompt', 'end_image_prompt', 'voiceover_sync_EN', 'voiceover_sync_TH',
       'full_script_EN', 'full_script_TH',
       'status', 'task',
       'avatar_name', 'voice_id',
@@ -1900,8 +1900,8 @@ app.post('/28property/analyze-transition', authMiddleware, async (req, res) => {
       ...req.body,
       action: 'analyze_transition',
       scene_number:       sceneFields.scene_number       || null,
-      image_prompt:       sceneFields.image_prompt       || '',
-      negative_prompt:    sceneFields.negative_prompt    || '',
+      start_image_prompt: sceneFields.start_image_prompt || '',
+      end_image_prompt:   sceneFields.end_image_prompt   || '',
       voiceover_sync_EN:  sceneFields.voiceover_sync_EN  || '',
       voiceover_sync_TH:  sceneFields.voiceover_sync_TH  || '',
       voice_id:           sceneFields.voice_id           || req.body.voice_id || '',
@@ -1965,8 +1965,8 @@ app.post('/28property/start-pipeline', authMiddleware, async (req, res) => {
       scene_number:            sceneFields.scene_number            || null,
       scene_type:              sceneFields.scene_type              || req.body.scene_type || '',
       pacing:                  sceneFields.pacing                  || null,
-      image_prompt:            sceneFields.image_prompt            || '',
-      negative_prompt:         sceneFields.negative_prompt         || '',
+      start_image_prompt:      sceneFields.start_image_prompt      || '',
+      end_image_prompt:        sceneFields.end_image_prompt        || '',
       voiceover_sync_EN:       sceneFields.voiceover_sync_EN       || '',
       voiceover_sync_TH:       sceneFields.voiceover_sync_TH       || '',
       full_script_EN:          sceneFields.full_script_EN          || '',
