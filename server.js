@@ -605,14 +605,14 @@ app.get('/airtable/scenes', authMiddleware, async (req, res) => {
       return res.status(400).json({ success: false, error: 'job_record_id query param required' });
 
     const fields = [
-      'no', 'scene_number', 'scene_type', 'pacing',
-      'estimated_duration_secs', 'total_scenes', 'total_duration',
+      'no', 'scene_number',
+      'estimated_duration_secs', 'total_scenes',
       'voiceover_sync_EN', 'voiceover_sync_TH',
       'full_script_EN', 'full_script_TH',
       'start_image_prompt', 'end_image_prompt',
-      'Generate', 'start_image', 'end_image', 'image', 'status', 'task',
-      'audio_EN', 'audio_TH', 'video_EN', 'full_audio_EN', 'full_audio_TH',
-      'full_video', 'voice_id', 'job_id'
+      'start_image', 'end_image', 'status', 'task',
+      'audio_EN', 'audio_TH', 'full_audio_EN', 'full_audio_TH',
+      'full_video', 'job_id'
     ];
     const fieldParams = fields.map(f => `fields[]=${encodeURIComponent(f)}`).join('&');
     const filter = encodeURIComponent(`{job_id}='${jobRecordId}'`);
