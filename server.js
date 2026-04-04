@@ -604,24 +604,10 @@ app.get('/airtable/scenes', authMiddleware, async (req, res) => {
     if (!jobRecordId)
       return res.status(400).json({ success: false, error: 'job_record_id query param required' });
 
-    const fields = [
-      'no', 'scene_number',
-      'estimated_duration_secs', 'total_scenes',
-      'voiceover_sync_EN', 'voiceover_sync_TH',
-      'full_script_EN', 'full_script_TH',
-      'start_image_prompt', 'video_prompt',
-      'start_image', 'image',
-      'video', 'full_video',
-      'full_audio_EN', 'full_audio_TH',
-      'kie_ai_taskId',
-      'scene_type', 'pacing', 'voice_id', 'status',
-      'job_id'
-    ];
-    const fieldParams = fields.map(f => `fields[]=${encodeURIComponent(f)}`).join('&');
     const filter = encodeURIComponent(`{job_id}='${jobRecordId}'`);
 
     const data = await atFetch(
-      `/${AIRTABLE_SCENES}?maxRecords=200&filterByFormula=${filter}&sort[0][field]=no&sort[0][direction]=asc&${fieldParams}`
+      `/${AIRTABLE_SCENES}?maxRecords=200&filterByFormula=${filter}&sort[0][field]=no&sort[0][direction]=asc`
     );
 
     const sceneMap = new Map();
