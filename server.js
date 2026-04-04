@@ -2082,18 +2082,15 @@ app.post('/28property/regen-line', authMiddleware, async (req, res) => {
         // Full scene fields
         record_id:               scene_id || '',
         scene_id:                scene_id || '',
-        scene_type:              sceneFields.scene_type              || '',
-        pacing:                  sceneFields.pacing                  || null,
-        image_prompt:            sceneFields.image_prompt            || '',
-        negative_prompt:         sceneFields.negative_prompt         || '',
         voiceover_sync_EN:       sceneFields.voiceover_sync_EN       || '',
         voiceover_sync_TH:       sceneFields.voiceover_sync_TH       || '',
         full_script_EN:          sceneFields.full_script_EN          || '',
         full_script_TH:          sceneFields.full_script_TH          || '',
-        voice_id:                sceneFields.voice_id                || '',
-        image:                   sceneFields.image                   || null,
-      start_image:             sceneFields.start_image             || null,
-      end_image:               sceneFields.end_image               || null,
+        start_image_prompt:      sceneFields.start_image_prompt      || '',
+        end_image_prompt:        sceneFields.end_image_prompt        || '',
+        video_prompt:            sceneFields.video_prompt            || '',
+        start_image:             sceneFields.start_image             || null,
+        end_image:               sceneFields.end_image               || null,
         estimated_duration_secs: sceneFields.estimated_duration_secs || null,
 
         // Parent job fields
