@@ -642,12 +642,13 @@ app.post('/airtable/scene/update', authMiddleware, async (req, res) => {
       return res.status(400).json({ success: false, error: 'record_id and fields required' });
 
     const allowed = [
-      'start_image_prompt', 'end_image_prompt',
+      'start_image_prompt', 'end_image_prompt', 'video_prompt',
       'voiceover_sync_EN', 'voiceover_sync_TH',
       'full_script_EN', 'full_script_TH',
       'status', 'task',
       'scene_number', 'scene_type', 'pacing', 'estimated_duration_secs',
-      'image', 'audio_EN', 'audio_TH', 'video_EN', 'full_audio_EN', 'full_audio_TH',
+      'start_image', 'end_image', 'video', 'full_video',
+      'audio_EN', 'audio_TH', 'full_audio_EN', 'full_audio_TH',
       'voice_id'
     ];
 
@@ -1988,6 +1989,8 @@ app.post('/28property/start-pipeline', authMiddleware, async (req, res) => {
       job_title:               jobFields['title']                  || '',
       execution_id:            jobFields['execution_id']           || req.body.execution_id || '',
       agent_name:              jobFields['agent_name']             || '',
+      avatar_prompt:           jobFields['avatar_prompt']           || '',
+      avatar_name:             jobFields['avatar_name']             || jobFields['agent_name'] || '',
 
       // User info
       action: req.body.task === 'analyze_transition' ? 'analyze_transition' : 'start_pipeline',
