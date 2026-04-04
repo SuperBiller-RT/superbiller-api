@@ -637,7 +637,7 @@ app.post('/airtable/scene/update', authMiddleware, async (req, res) => {
       'full_script_EN', 'full_script_TH',
       'status', 'task',
       'scene_number', 'scene_type', 'pacing', 'estimated_duration_secs',
-      'start_image', 'video', 'full_video',
+      'image', 'start_image', 'video', 'full_video',
       'audio_EN', 'audio_TH', 'full_audio_EN', 'full_audio_TH',
       'voice_id'
     ];
