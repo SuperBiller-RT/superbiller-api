@@ -609,9 +609,9 @@ app.get('/airtable/scenes', authMiddleware, async (req, res) => {
       'estimated_duration_secs', 'total_scenes',
       'voiceover_sync_EN', 'voiceover_sync_TH',
       'full_script_EN', 'full_script_TH',
-      'start_image_prompt', 'end_image_prompt',
+      'start_image_prompt', 'end_image_prompt', 'video_prompt',
       'start_image', 'end_image',
-      'job_id'
+      'video_prompt', 'job_id'
     ];
     const fieldParams = fields.map(f => `fields[]=${encodeURIComponent(f)}`).join('&');
     const filter = encodeURIComponent(`{job_id}='${jobRecordId}'`);
@@ -1966,6 +1966,7 @@ app.post('/28property/start-pipeline', authMiddleware, async (req, res) => {
       pacing:                  sceneFields.pacing                  || null,
       start_image_prompt:      sceneFields.start_image_prompt      || '',
       end_image_prompt:        sceneFields.end_image_prompt        || '',
+      video_prompt:            sceneFields.video_prompt            || '',
       voiceover_sync_EN:       sceneFields.voiceover_sync_EN       || '',
       voiceover_sync_TH:       sceneFields.voiceover_sync_TH       || '',
       full_script_EN:          sceneFields.full_script_EN          || '',
