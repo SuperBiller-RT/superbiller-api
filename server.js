@@ -738,7 +738,7 @@ app.post('/airtable/scene/upload', authMiddleware, (req, res) => {
         if (!recordId || !field || !fileBuffer)
           return res.status(400).json({ success: false, error: 'Missing record_id, field, or file' });
 
-        const allowedFields = ['image', 'video_EN', 'audio_EN', 'audio_TH', 'full_audio_EN', 'full_audio_TH', 'full_video'];
+        const allowedFields = ['start_image', 'end_image', 'video', 'audio_EN', 'audio_TH', 'full_audio_EN', 'full_audio_TH', 'full_video'];
         if (!allowedFields.includes(field))
           return res.status(400).json({ success: false, error: 'Field not allowed: ' + field });
 
@@ -1912,7 +1912,7 @@ app.post('/28property/analyze-transition', authMiddleware, async (req, res) => {
       pipeline:           jobFields['pipeline ( **required** )'] || '',
       job_title:          jobFields['title']             || '',
       execution_id:       jobFields['execution_id']      || req.body.execution_id || '',
-      agent_name:         jobFields['agent_name']        || '',
+      agent_name:         jobFields['user']              || '',
       user_email:         req.user.email || '',
       user_name:          req.user.name  || '',
       triggered_at:       new Date().toISOString()
@@ -1988,9 +1988,9 @@ app.post('/28property/start-pipeline', authMiddleware, async (req, res) => {
       search_focus:            jobFields['search_focus ( **required** )'] || '',
       job_title:               jobFields['title']                  || '',
       execution_id:            jobFields['execution_id']           || req.body.execution_id || '',
-      agent_name:              jobFields['agent_name']             || '',
+      agent_name:              jobFields['user']                   || '',
       avatar_prompt:           jobFields['avatar_prompt']           || '',
-      avatar_name:             jobFields['avatar_name']             || jobFields['agent_name'] || '',
+      avatar_url:              (jobFields['avatar'] && jobFields['avatar'][0] && jobFields['avatar'][0].url) || '',
 
       // User info
       action: req.body.task === 'analyze_transition' ? 'analyze_transition' : 'start_pipeline',
@@ -2104,7 +2104,9 @@ app.post('/28property/regen-line', authMiddleware, async (req, res) => {
         search_focus: jobFields['search_focus ( **required** )']     || '',
         job_title:    jobFields['title'] || job_title                || '',
         execution_id: jobFields['execution_id'] || req.body.execution_id || '',
-        agent_name:   jobFields['agent_name']                        || '',
+        agent_name:   jobFields['user']                              || '',
+        avatar_prompt:jobFields['avatar_prompt']                     || '',
+        avatar_url:   (jobFields['avatar'] && jobFields['avatar'][0] && jobFields['avatar'][0].url) || '',
 
         // User info
         user_email:   req.user.email || '',
