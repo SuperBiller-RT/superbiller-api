@@ -609,13 +609,13 @@ app.get('/airtable/scenes', authMiddleware, async (req, res) => {
       'estimated_duration_secs', 'total_scenes', 'total_duration',
       'voiceover_sync_EN', 'voiceover_sync_TH',
       'full_script_EN', 'full_script_TH',
-      'image_prompt', 'negative_prompt',
-      'Generate', 'image', 'status', 'task',
+      'image_prompt', 'negative_prompt', 'video_prompt',
+      'Generate', 'start_image', 'end_image', 'image', 'status', 'task',
       'audio_EN', 'audio_TH', 'video_EN', 'full_audio_EN', 'full_audio_TH',
-      'voice_id'
+      'full_video', 'voice_id', 'job_id'
     ];
     const fieldParams = fields.map(f => `fields[]=${encodeURIComponent(f)}`).join('&');
-    const filter = encodeURIComponent(`{job_id}="${jobRecordId}"`);
+    const filter = encodeURIComponent(`{job_id}='${jobRecordId}'`);
 
     const data = await atFetch(
       `/${AIRTABLE_SCENES}?maxRecords=200&filterByFormula=${filter}&sort[0][field]=no&sort[0][direction]=asc&${fieldParams}`
