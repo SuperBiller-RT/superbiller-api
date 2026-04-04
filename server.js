@@ -610,8 +610,12 @@ app.get('/airtable/scenes', authMiddleware, async (req, res) => {
       'voiceover_sync_EN', 'voiceover_sync_TH',
       'full_script_EN', 'full_script_TH',
       'start_image_prompt', 'end_image_prompt', 'video_prompt',
-      'start_image', 'end_image',
-      'video_prompt', 'job_id'
+      'start_image', 'end_image', 'image',
+      'video', 'full_video',
+      'full_audio_EN', 'full_audio_TH',
+      'kie_ai_taskId',
+      'scene_type', 'pacing', 'voice_id', 'status',
+      'job_id'
     ];
     const fieldParams = fields.map(f => `fields[]=${encodeURIComponent(f)}`).join('&');
     const filter = encodeURIComponent(`{job_id}='${jobRecordId}'`);
