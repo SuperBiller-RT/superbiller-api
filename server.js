@@ -957,6 +957,67 @@ app.post('/db/query', authMiddleware, async (req, res) => {
 // 28PROPERTY ROUTES
 // ══════════════════════════════════════════════════════════
 
+app.post('/avatar/upload', authMiddleware, (req, res) => {
+  try {
+    const Busboy = require('busboy');
+    const busboy = Busboy({ headers: req.headers, limits: { fileSize: 10 * 1024 * 1024 } });
+
+    let fileBuffer = null, fileName = 'avatar', mimeType = 'image/jpeg', agentName = '';
+    let fileSizeLimitHit = false;
+    const chunks = [];
+
+    busboy.on('file', (fieldname, file, info) => {
+      fileName = info.filename || 'avatar';
+      mimeType = info.mimeType || info.mime || info.mimetype || 'image/jpeg';
+      file.on('data', chunk => chunks.push(chunk));
+      file.on('limit', () => { fileSizeLimitHit = true; });
+      file.on('end', () => { if (!fileSizeLimitHit) fileBuffer = Buffer.concat(chunks); });
+    });
+
+    busboy.on('field', (name, val) => {
+      if (name === 'agent_name') agentName = val.trim();
+    });
+
+    busboy.on('finish', async () => {
+      try {
+        if (fileSizeLimitHit)
+          return res.status(400).json({ success: false, error: 'Image must be under 10MB' });
+        if (!fileBuffer || fileBuffer.length === 0)
+          return res.status(400).json({ success: false, error: 'No image file received' });
+
+        const normMime = mimeType.split(';')[0].trim().toLowerCase();
+        const ext = (fileName || '').split('.').pop().toLowerCase();
+        const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'application/octet-stream'];
+        const allowedExts  = ['jpg', 'jpeg', 'png', 'webp'];
+        if (!allowedTypes.includes(normMime) && !allowedExts.includes(ext))
+          return res.status(400).json({ success: false, error: 'Only JPG, PNG or WebP images allowed. Got: ' + normMime });
+
+        const result = await db.query(
+          `INSERT INTO property_agent_images (filename, mime_type, data, agent_name, user_email)
+           VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+          [fileName, normMime === 'application/octet-stream' ? 'image/jpeg' : normMime, fileBuffer, agentName, req.user.email || '']
+        );
+
+        const imageId  = result.rows[0].id;
+        const imageUrl = \`\${API_BASE_URL}/28property/image/\${imageId}\`;
+        res.json({ success: true, image_id: imageId, image_url: imageUrl });
+      } catch (err) {
+        console.error('avatar upload db error:', err.message);
+        res.status(500).json({ success: false, error: err.message });
+      }
+    });
+
+    busboy.on('error', (err) => {
+      res.status(500).json({ success: false, error: 'Upload parse error: ' + err.message });
+    });
+
+    req.pipe(busboy);
+  } catch (err) {
+    console.error('avatar upload error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.post('/28property/upload', authMiddleware, (req, res) => {
   try {
     const Busboy = require('busboy');
@@ -988,14 +1049,11 @@ app.post('/28property/upload', authMiddleware, (req, res) => {
         if (!fileBuffer || fileBuffer.length === 0)
           return res.status(400).json({ success: false, error: 'No image file received' });
 
-        // Normalise — some browsers/OS send octet-stream or other variants
+        const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+        // Normalise — some browsers send image/jpg
         const normMime = mimeType.split(';')[0].trim().toLowerCase();
-        const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif', 'application/octet-stream'];
-        // Also check by file extension as fallback
-        const ext = (fileName || '').split('.').pop().toLowerCase();
-        const allowedExts = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
-        if (!allowedTypes.includes(normMime) && !allowedExts.includes(ext))
-          return res.status(400).json({ success: false, error: 'Only JPG, PNG or WebP images allowed. Got: ' + normMime });
+        if (!allowedTypes.includes(normMime))
+          return res.status(400).json({ success: false, error: 'Only JPG, PNG or WebP images allowed' });
 
         const result = await db.query(
           `INSERT INTO property_agent_images (filename, mime_type, data, agent_name, user_email)
