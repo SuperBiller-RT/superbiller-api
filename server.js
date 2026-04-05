@@ -999,7 +999,7 @@ app.post('/avatar/upload', authMiddleware, (req, res) => {
         );
 
         const imageId  = result.rows[0].id;
-        const imageUrl = \`\${API_BASE_URL}/28property/image/\${imageId}\`;
+        const imageUrl = `${API_BASE_URL}/28property/image/${imageId}`;
         res.json({ success: true, image_id: imageId, image_url: imageUrl });
       } catch (err) {
         console.error('avatar upload db error:', err.message);
