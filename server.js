@@ -604,10 +604,20 @@ app.get('/airtable/scenes', authMiddleware, async (req, res) => {
     if (!jobRecordId)
       return res.status(400).json({ success: false, error: 'job_record_id query param required' });
 
+    const fields = [
+      'no', 'scene_number',
+      'estimated_duration_secs', 'total_scenes',
+      'voiceover_sync_EN', 'voiceover_sync_TH',
+      'full_script_EN', 'full_script_TH',
+      'start_image_prompt', 'end_image_prompt', 'video_prompt',
+      'start_image', 'end_image',
+      'video_prompt', 'job_id'
+    ];
+    const fieldParams = fields.map(f => `fields[]=${encodeURIComponent(f)}`).join('&');
     const filter = encodeURIComponent(`{job_id}='${jobRecordId}'`);
 
     const data = await atFetch(
-      `/${AIRTABLE_SCENES}?maxRecords=200&filterByFormula=${filter}&sort[0][field]=no&sort[0][direction]=asc`
+      `/${AIRTABLE_SCENES}?maxRecords=200&filterByFormula=${filter}&sort[0][field]=no&sort[0][direction]=asc&${fieldParams}`
     );
 
     const sceneMap = new Map();
@@ -632,12 +642,12 @@ app.post('/airtable/scene/update', authMiddleware, async (req, res) => {
       return res.status(400).json({ success: false, error: 'record_id and fields required' });
 
     const allowed = [
-      'start_image_prompt', 'video_prompt',
+      'start_image_prompt', 'end_image_prompt', 'video_prompt',
       'voiceover_sync_EN', 'voiceover_sync_TH',
       'full_script_EN', 'full_script_TH',
       'status', 'task',
       'scene_number', 'scene_type', 'pacing', 'estimated_duration_secs',
-      'image', 'start_image', 'video', 'full_video',
+      'start_image', 'end_image', 'video', 'full_video',
       'audio_EN', 'audio_TH', 'full_audio_EN', 'full_audio_TH',
       'voice_id'
     ];
@@ -668,7 +678,7 @@ app.post('/airtable/scenes/batch-update', authMiddleware, async (req, res) => {
 
     const allowed = [
       'scene_number', 'scene_type', 'pacing', 'estimated_duration_secs',
-      'start_image_prompt', 'voiceover_sync_EN', 'voiceover_sync_TH',
+      'start_image_prompt', 'end_image_prompt', 'voiceover_sync_EN', 'voiceover_sync_TH',
       'full_script_EN', 'full_script_TH',
       'status', 'task',
       'avatar_name', 'voice_id',
@@ -728,7 +738,7 @@ app.post('/airtable/scene/upload', authMiddleware, (req, res) => {
         if (!recordId || !field || !fileBuffer)
           return res.status(400).json({ success: false, error: 'Missing record_id, field, or file' });
 
-        const allowedFields = ['start_image', 'video', 'audio_EN', 'audio_TH', 'full_audio_EN', 'full_audio_TH', 'full_video'];
+        const allowedFields = ['start_image', 'end_image', 'video', 'audio_EN', 'audio_TH', 'full_audio_EN', 'full_audio_TH', 'full_video'];
         if (!allowedFields.includes(field))
           return res.status(400).json({ success: false, error: 'Field not allowed: ' + field });
 
@@ -1891,7 +1901,8 @@ app.post('/28property/analyze-transition', authMiddleware, async (req, res) => {
       action: 'analyze_transition',
       scene_number:       sceneFields.scene_number       || null,
       start_image_prompt: sceneFields.start_image_prompt || '',
-            voiceover_sync_EN:  sceneFields.voiceover_sync_EN  || '',
+      end_image_prompt:   sceneFields.end_image_prompt   || '',
+      voiceover_sync_EN:  sceneFields.voiceover_sync_EN  || '',
       voiceover_sync_TH:  sceneFields.voiceover_sync_TH  || '',
       voice_id:           sceneFields.voice_id           || req.body.voice_id || '',
       image:              sceneFields.image              || null,
@@ -1955,7 +1966,8 @@ app.post('/28property/start-pipeline', authMiddleware, async (req, res) => {
       scene_type:              sceneFields.scene_type              || req.body.scene_type || '',
       pacing:                  sceneFields.pacing                  || null,
       start_image_prompt:      sceneFields.start_image_prompt      || '',
-            video_prompt:            sceneFields.video_prompt            || '',
+      end_image_prompt:        sceneFields.end_image_prompt        || '',
+      video_prompt:            sceneFields.video_prompt            || '',
       voiceover_sync_EN:       sceneFields.voiceover_sync_EN       || '',
       voiceover_sync_TH:       sceneFields.voiceover_sync_TH       || '',
       full_script_EN:          sceneFields.full_script_EN          || '',
@@ -1963,7 +1975,8 @@ app.post('/28property/start-pipeline', authMiddleware, async (req, res) => {
       voice_id:                sceneFields.voice_id                || req.body.voice_id || '',
       image:                   sceneFields.image                   || null,
       start_image:             sceneFields.start_image             || null,
-            audio_EN:                sceneFields.audio_EN                || null,
+      end_image:               sceneFields.end_image               || null,
+      audio_EN:                sceneFields.audio_EN                || null,
       audio_TH:                sceneFields.audio_TH                || null,
       estimated_duration_secs: sceneFields.estimated_duration_secs || null,
 
@@ -1980,7 +1993,7 @@ app.post('/28property/start-pipeline', authMiddleware, async (req, res) => {
       avatar_url:              (jobFields['avatar'] && jobFields['avatar'][0] && jobFields['avatar'][0].url) || '',
 
       // User info
-      action: req.body.task === 'analyze_transition' ? 'analyze_transition' : 'start_pipeline',
+      action: req.body.task === 'analyze_transition' ? 'analyze_transition' : req.body.task === 'extend' ? 'extend' : 'start_pipeline',
       user_email:              req.user.email || '',
       user_name:               req.user.name  || '',
       user_role:               req.user.role  || '',
@@ -2077,9 +2090,11 @@ app.post('/28property/regen-line', authMiddleware, async (req, res) => {
         full_script_EN:          sceneFields.full_script_EN          || '',
         full_script_TH:          sceneFields.full_script_TH          || '',
         start_image_prompt:      sceneFields.start_image_prompt      || '',
-                video_prompt:            sceneFields.video_prompt            || '',
+        end_image_prompt:        sceneFields.end_image_prompt        || '',
+        video_prompt:            sceneFields.video_prompt            || '',
         start_image:             sceneFields.start_image             || null,
-                estimated_duration_secs: sceneFields.estimated_duration_secs || null,
+        end_image:               sceneFields.end_image               || null,
+        estimated_duration_secs: sceneFields.estimated_duration_secs || null,
 
         // Parent job fields
         job_id:       sceneFields.job_id                              || '',
