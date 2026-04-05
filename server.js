@@ -604,10 +604,20 @@ app.get('/airtable/scenes', authMiddleware, async (req, res) => {
     if (!jobRecordId)
       return res.status(400).json({ success: false, error: 'job_record_id query param required' });
 
+    const fields = [
+      'no', 'scene_number',
+      'estimated_duration_secs', 'total_scenes',
+      'voiceover_sync_EN', 'voiceover_sync_TH',
+      'full_script_EN', 'full_script_TH',
+      'start_image_prompt', 'end_image_prompt', 'video_prompt',
+      'start_image', 'end_image',
+      'video_prompt', 'job_id'
+    ];
+    const fieldParams = fields.map(f => `fields[]=${encodeURIComponent(f)}`).join('&');
     const filter = encodeURIComponent(`{job_id}='${jobRecordId}'`);
 
     const data = await atFetch(
-      `/${AIRTABLE_SCENES}?maxRecords=200&filterByFormula=${filter}&sort[0][field]=no&sort[0][direction]=asc`
+      `/${AIRTABLE_SCENES}?maxRecords=200&filterByFormula=${filter}&sort[0][field]=no&sort[0][direction]=asc&${fieldParams}`
     );
 
     const sceneMap = new Map();
@@ -978,11 +988,14 @@ app.post('/28property/upload', authMiddleware, (req, res) => {
         if (!fileBuffer || fileBuffer.length === 0)
           return res.status(400).json({ success: false, error: 'No image file received' });
 
-        const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
-        // Normalise — some browsers send image/jpg
+        // Normalise — some browsers/OS send octet-stream or other variants
         const normMime = mimeType.split(';')[0].trim().toLowerCase();
-        if (!allowedTypes.includes(normMime))
-          return res.status(400).json({ success: false, error: 'Only JPG, PNG or WebP images allowed' });
+        const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif', 'application/octet-stream'];
+        // Also check by file extension as fallback
+        const ext = (fileName || '').split('.').pop().toLowerCase();
+        const allowedExts = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
+        if (!allowedTypes.includes(normMime) && !allowedExts.includes(ext))
+          return res.status(400).json({ success: false, error: 'Only JPG, PNG or WebP images allowed. Got: ' + normMime });
 
         const result = await db.query(
           `INSERT INTO property_agent_images (filename, mime_type, data, agent_name, user_email)
@@ -1983,7 +1996,7 @@ app.post('/28property/start-pipeline', authMiddleware, async (req, res) => {
       avatar_url:              (jobFields['avatar'] && jobFields['avatar'][0] && jobFields['avatar'][0].url) || '',
 
       // User info
-      action: req.body.task === 'analyze_transition' ? 'analyze_transition' : req.body.task === 'extend' ? 'extend' : 'start_pipeline',
+      action: req.body.task === 'analyze_transition' ? 'analyze_transition' : 'start_pipeline',
       user_email:              req.user.email || '',
       user_name:               req.user.name  || '',
       user_role:               req.user.role  || '',
