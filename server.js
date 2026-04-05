@@ -604,20 +604,10 @@ app.get('/airtable/scenes', authMiddleware, async (req, res) => {
     if (!jobRecordId)
       return res.status(400).json({ success: false, error: 'job_record_id query param required' });
 
-    const fields = [
-      'no', 'scene_number',
-      'estimated_duration_secs', 'total_scenes',
-      'voiceover_sync_EN', 'voiceover_sync_TH',
-      'full_script_EN', 'full_script_TH',
-      'start_image_prompt', 'end_image_prompt', 'video_prompt',
-      'start_image', 'end_image',
-      'video_prompt', 'job_id'
-    ];
-    const fieldParams = fields.map(f => `fields[]=${encodeURIComponent(f)}`).join('&');
     const filter = encodeURIComponent(`{job_id}='${jobRecordId}'`);
 
     const data = await atFetch(
-      `/${AIRTABLE_SCENES}?maxRecords=200&filterByFormula=${filter}&sort[0][field]=no&sort[0][direction]=asc&${fieldParams}`
+      `/${AIRTABLE_SCENES}?maxRecords=200&filterByFormula=${filter}&sort[0][field]=no&sort[0][direction]=asc`
     );
 
     const sceneMap = new Map();
@@ -956,67 +946,6 @@ app.post('/db/query', authMiddleware, async (req, res) => {
 // ══════════════════════════════════════════════════════════
 // 28PROPERTY ROUTES
 // ══════════════════════════════════════════════════════════
-
-app.post('/avatar/upload', authMiddleware, (req, res) => {
-  try {
-    const Busboy = require('busboy');
-    const busboy = Busboy({ headers: req.headers, limits: { fileSize: 10 * 1024 * 1024 } });
-
-    let fileBuffer = null, fileName = 'avatar', mimeType = 'image/jpeg', agentName = '';
-    let fileSizeLimitHit = false;
-    const chunks = [];
-
-    busboy.on('file', (fieldname, file, info) => {
-      fileName = info.filename || 'avatar';
-      mimeType = info.mimeType || info.mime || info.mimetype || 'image/jpeg';
-      file.on('data', chunk => chunks.push(chunk));
-      file.on('limit', () => { fileSizeLimitHit = true; });
-      file.on('end', () => { if (!fileSizeLimitHit) fileBuffer = Buffer.concat(chunks); });
-    });
-
-    busboy.on('field', (name, val) => {
-      if (name === 'agent_name') agentName = val.trim();
-    });
-
-    busboy.on('finish', async () => {
-      try {
-        if (fileSizeLimitHit)
-          return res.status(400).json({ success: false, error: 'Image must be under 10MB' });
-        if (!fileBuffer || fileBuffer.length === 0)
-          return res.status(400).json({ success: false, error: 'No image file received' });
-
-        const normMime = mimeType.split(';')[0].trim().toLowerCase();
-        const ext = (fileName || '').split('.').pop().toLowerCase();
-        const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'application/octet-stream'];
-        const allowedExts  = ['jpg', 'jpeg', 'png', 'webp'];
-        if (!allowedTypes.includes(normMime) && !allowedExts.includes(ext))
-          return res.status(400).json({ success: false, error: 'Only JPG, PNG or WebP images allowed. Got: ' + normMime });
-
-        const result = await db.query(
-          `INSERT INTO property_agent_images (filename, mime_type, data, agent_name, user_email)
-           VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-          [fileName, normMime === 'application/octet-stream' ? 'image/jpeg' : normMime, fileBuffer, agentName, req.user.email || '']
-        );
-
-        const imageId  = result.rows[0].id;
-        const imageUrl = `${API_BASE_URL}/28property/image/${imageId}`;
-        res.json({ success: true, image_id: imageId, image_url: imageUrl });
-      } catch (err) {
-        console.error('avatar upload db error:', err.message);
-        res.status(500).json({ success: false, error: err.message });
-      }
-    });
-
-    busboy.on('error', (err) => {
-      res.status(500).json({ success: false, error: 'Upload parse error: ' + err.message });
-    });
-
-    req.pipe(busboy);
-  } catch (err) {
-    console.error('avatar upload error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
 
 app.post('/28property/upload', authMiddleware, (req, res) => {
   try {
