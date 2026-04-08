@@ -994,6 +994,17 @@ app.get('/marketing/partners', authMiddleware, async (req, res) => {
   }
 });
 
+app.get('/marketing/linkedin', authMiddleware, async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT * FROM linkedin_posts ORDER BY published_at DESC LIMIT 100`
+    );
+    res.json({ success: true, posts: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ── POSTGRES — raw query ──────────────────────────────────
 app.post('/db/query', authMiddleware, async (req, res) => {
   try {
