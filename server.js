@@ -932,6 +932,68 @@ app.get('/dashboard/weekly', authMiddleware, async (req, res) => {
   }
 });
 
+// ══════════════════════════════════════════════════════════
+// MARKETING DASHBOARD ROUTES
+// ══════════════════════════════════════════════════════════
+
+app.get('/marketing/videos', authMiddleware, async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT * FROM yt_videos ORDER BY published_at DESC LIMIT 100`
+    );
+    res.json({ success: true, videos: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/marketing/comments', authMiddleware, async (req, res) => {
+  try {
+    const { video_id } = req.query;
+    const query = video_id
+      ? `SELECT * FROM yt_comments WHERE video_id = $1 ORDER BY published_at DESC LIMIT 200`
+      : `SELECT * FROM yt_comments ORDER BY published_at DESC LIMIT 200`;
+    const params = video_id ? [video_id] : [];
+    const result = await db.query(query, params);
+    res.json({ success: true, comments: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/marketing/leads', authMiddleware, async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT * FROM leads ORDER BY created_at DESC LIMIT 200`
+    );
+    res.json({ success: true, leads: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/marketing/campaigns', authMiddleware, async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT * FROM campaigns ORDER BY created_at DESC LIMIT 100`
+    );
+    res.json({ success: true, campaigns: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/marketing/partners', authMiddleware, async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT * FROM partners ORDER BY created_at DESC LIMIT 100`
+    );
+    res.json({ success: true, partners: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ── POSTGRES — raw query ──────────────────────────────────
 app.post('/db/query', authMiddleware, async (req, res) => {
   try {
